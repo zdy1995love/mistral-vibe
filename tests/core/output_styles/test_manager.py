@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
 import pytest
 
 from vibe import VIBE_ROOT
-
 
 BUILTIN_STYLES_DIR = VIBE_ROOT / "core" / "prompts" / "styles"
 
@@ -23,7 +22,8 @@ class TestBuiltinStyleFiles:
 
     def test_default_md_is_blank_after_strip(self) -> None:
         """default.md must be comment-only/blank so output_style='default'
-        produces a system prompt byte-identical to the pre-upgrade output."""
+        produces a system prompt byte-identical to the pre-upgrade output.
+        """
         text = (BUILTIN_STYLES_DIR / "default.md").read_text(encoding="utf-8")
         body = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
         assert body == "", f"default.md must contribute no visible text, got: {body!r}"
@@ -40,12 +40,13 @@ class TestBuiltinStyleFiles:
         assert any(kw in lowered for kw in ("explain", "teach", "learn", "why"))
 
 
-from vibe.core.output_styles import StyleManager, StyleNotFoundError  # noqa: E402
+from vibe.core.output_styles import StyleManager, StyleNotFoundError
 
 
 def _make_style_manager_with_user_dir(user_dir: Path) -> StyleManager:
     """Construct a StyleManager with an explicit user_dir to avoid monkeypatching
-    VIBE_HOME (GlobalPath has no refresh() method)."""
+    VIBE_HOME (GlobalPath has no refresh() method).
+    """
     return StyleManager(user_dir=user_dir)
 
 

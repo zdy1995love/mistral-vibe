@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import build_test_agent_loop, build_test_vibe_app, build_test_vibe_config
+from tests.conftest import (
+    build_test_agent_loop,
+    build_test_vibe_app,
+    build_test_vibe_config,
+)
 
 
 def _widget_content(widget: Any) -> str:
@@ -60,7 +64,9 @@ class TestStyleHandlerSwitch:
     ) -> None:
         from vibe.core.config import VibeConfig
 
-        monkeypatch.setattr(VibeConfig, "save_updates", classmethod(lambda cls, u: None))
+        monkeypatch.setattr(
+            VibeConfig, "save_updates", classmethod(lambda cls, u: None)
+        )
 
         config = build_test_vibe_config(output_style="default")
         loop = build_test_agent_loop(config=config)
@@ -93,9 +99,7 @@ class TestStyleHandlerSwitch:
 
         save_calls: list[dict] = []
         monkeypatch.setattr(
-            VibeConfig,
-            "save_updates",
-            classmethod(lambda cls, u: save_calls.append(u)),
+            VibeConfig, "save_updates", classmethod(lambda cls, u: save_calls.append(u))
         )
 
         config = build_test_vibe_config(output_style="default")

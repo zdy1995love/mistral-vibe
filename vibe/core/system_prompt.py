@@ -265,8 +265,7 @@ def get_universal_system_prompt(
         # prompt is assembled on every turn; a typo in config.toml should not
         # break the session.
         logging.getLogger(__name__).warning(
-            "Unknown output_style %r; falling back to 'default'",
-            config.output_style,
+            "Unknown output_style %r; falling back to 'default'", config.output_style
         )
         _style_text = _style_mgr.load("default")
 

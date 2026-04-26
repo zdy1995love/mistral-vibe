@@ -66,7 +66,8 @@ class TestOutputStyleInjection:
         prompt byte-identical to the legacy (pre-feature) assembly. The
         default.md file is comment-only/whitespace so after .strip() it
         contributes nothing and join over an unchanged sections list yields
-        the legacy bytes exactly."""
+        the legacy bytes exactly.
+        """
         prompt = _build_prompt("default")
         assert "<!--" not in prompt
         assert "default output style" not in prompt
@@ -82,6 +83,7 @@ class TestOutputStyleInjection:
 
     def test_unknown_style_falls_back_to_default(self) -> None:
         """If config.output_style points to a non-existent style, the
-        assembler logs and falls back to 'default' rather than crashing."""
+        assembler logs and falls back to 'default' rather than crashing.
+        """
         prompt = _build_prompt("does-not-exist")
         assert "Output Style:" not in prompt

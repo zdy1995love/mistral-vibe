@@ -30,9 +30,7 @@ class StyleManager:
     """
 
     def __init__(
-        self,
-        builtin_dir: Path | None = None,
-        user_dir: Path | None = None,
+        self, builtin_dir: Path | None = None, user_dir: Path | None = None
     ) -> None:
         self._builtin_dir = builtin_dir or _BUILTIN_STYLES_DIR
         self._user_dir_override = user_dir
