@@ -76,6 +76,7 @@ from vibe.cli.textual_ui.widgets.model_picker import ModelPickerApp
 from vibe.cli.textual_ui.widgets.narrator_status import NarratorStatus
 from vibe.cli.textual_ui.widgets.no_markup_static import NoMarkupStatic
 from vibe.cli.textual_ui.widgets.path_display import PathDisplay
+from vibe.cli.textual_ui.widgets.plan_mode_indicator import PlanModeIndicator
 from vibe.cli.textual_ui.widgets.proxy_setup_app import ProxySetupApp
 from vibe.cli.textual_ui.widgets.question_app import QuestionApp
 from vibe.cli.textual_ui.widgets.rewind_app import RewindApp
@@ -110,6 +111,7 @@ from vibe.cli.voice_manager import VoiceManager, VoiceManagerPort
 from vibe.cli.voice_manager.voice_manager_port import TranscribeState
 from vibe.core.agent_loop import AgentLoop, TeleportError
 from vibe.core.agents import AgentProfile
+from vibe.core.agents.models import BuiltinAgentName
 from vibe.core.audio_player.audio_player import AudioPlayer
 from vibe.core.audio_recorder import AudioRecorder
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
@@ -331,6 +333,7 @@ class VibeApp(App):  # noqa: PLR0904
         self._user_interaction_lock = asyncio.Lock()
 
         self.event_handler: EventHandler | None = None
+        self._plan_indicator: PlanModeIndicator | None = None
 
         excluded_commands = []
         if not self.config.nuage_enabled:
@@ -414,6 +417,7 @@ class VibeApp(App):  # noqa: PLR0904
 
         with Horizontal(id="bottom-bar"):
             yield PathDisplay(self.config.displayed_workdir or Path.cwd())
+            yield PlanModeIndicator()
             yield NoMarkupStatic(id="spacer")
             yield ContextProgress()
 
@@ -425,6 +429,10 @@ class VibeApp(App):  # noqa: PLR0904
         self._cached_chat = self.query_one("#chat", ChatScroll)
         self._cached_loading_area = self.query_one("#loading-area-content")
         self._feedback_bar = self.query_one(FeedbackBar)
+        self._plan_indicator = self.query_one(PlanModeIndicator)
+        self._plan_indicator.set_active(
+            self.agent_loop.agent_manager.active_profile.name == BuiltinAgentName.PLAN
+        )
 
         self.event_handler = EventHandler(
             mount_callback=self._mount_and_scroll,
@@ -1770,6 +1778,23 @@ class VibeApp(App):  # noqa: PLR0904
                 )
             )
 
+    async def _toggle_plan_mode(self, cmd_args: str = "", **kwargs: Any) -> None:
+        if self._agent_running:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Cannot toggle plan mode while agent loop is processing.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+
+        currently_in_plan = (
+            self.agent_loop.agent_manager.active_profile.name == BuiltinAgentName.PLAN
+        )
+        target = BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        self.agent_loop.agent_manager.switch_profile(target)
+        self._on_profile_changed()
+
     async def _compact_history(self, cmd_args: str = "", **kwargs: Any) -> None:
         if self._agent_running:
             await self._mount_and_scroll(
@@ -2405,6 +2430,11 @@ class VibeApp(App):  # noqa: PLR0904
     def _on_profile_changed(self) -> None:
         self._refresh_profile_widgets()
         self._refresh_banner()
+        if self._plan_indicator is not None:
+            self._plan_indicator.set_active(
+                self.agent_loop.agent_manager.active_profile.name
+                == BuiltinAgentName.PLAN
+            )
 
     def _refresh_banner(self) -> None:
         if self._banner:
