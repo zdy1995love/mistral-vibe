@@ -69,10 +69,33 @@ class OpenAIAdapter(APIAdapter):
         return headers
 
     def _reasoning_to_api(
-        self, msg_dict: dict[str, Any], field_name: str
+        self,
+        msg_dict: dict[str, Any],
+        field_name: str,
+        send_thinking_blocks: bool = False,
     ) -> dict[str, Any]:
-        if field_name != "reasoning_content" and "reasoning_content" in msg_dict:
-            msg_dict[field_name] = msg_dict.pop("reasoning_content")
+        if msg_dict.get("role") != "assistant":
+            msg_dict.pop("reasoning_content", None)
+            return msg_dict
+
+        reasoning = msg_dict.pop("reasoning_content", None)
+        if not reasoning:
+            return msg_dict
+
+        if send_thinking_blocks:
+            content = msg_dict.get("content") or ""
+            blocks: list[dict[str, Any]] = [
+                {"type": "thinking", "thinking": reasoning}
+            ]
+            if content:
+                blocks.append({"type": "text", "text": content})
+            msg_dict["content"] = blocks
+            return msg_dict
+
+        if field_name != "reasoning_content":
+            msg_dict[field_name] = reasoning
+        else:
+            msg_dict["reasoning_content"] = reasoning
         return msg_dict
 
     def _reasoning_from_api(
@@ -100,6 +123,7 @@ class OpenAIAdapter(APIAdapter):
         del thinking  # OpenAI-style reasoning is controlled via reasoning_effort
         merged_messages = merge_consecutive_user_messages(messages)
         field_name = provider.reasoning_field_name
+        send_blocks = provider.send_thinking_blocks
         converted_messages = [
             self._reasoning_to_api(
                 msg.model_dump(
@@ -107,6 +131,7 @@ class OpenAIAdapter(APIAdapter):
                     exclude={"message_id", "reasoning_message_id", "injected"},
                 ),
                 field_name,
+                send_thinking_blocks=send_blocks,
             )
             for msg in merged_messages
         ]

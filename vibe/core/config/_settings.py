@@ -160,6 +160,7 @@ class ProviderConfig(BaseModel):
     api_style: str = "openai"
     backend: Backend = Backend.GENERIC
     reasoning_field_name: str = "reasoning_content"
+    send_thinking_blocks: bool = False
     project_id: str = ""
     region: str = ""
 
