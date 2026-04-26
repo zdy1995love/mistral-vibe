@@ -87,7 +87,7 @@ class TestStyleHandlerSwitch:
 
         await app._set_output_style(cmd_args="concise")
 
-        new_system = loop.messages[0].content
+        new_system = loop.messages[0].content or ""
         assert "Output Style: Concise" in new_system
         assert loop.config.output_style == "concise"
 
