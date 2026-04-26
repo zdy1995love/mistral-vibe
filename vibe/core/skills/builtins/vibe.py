@@ -70,7 +70,9 @@ enable_update_checks = true
 enable_auto_update = true
 enable_notifications = true
 api_timeout = 720.0               # API request timeout in seconds
-auto_compact_threshold = 200000   # Token count before auto-compaction
+auto_compact_threshold = 200000   # Token count before auto-compaction (full compact)
+micro_compact_ratio = 0.7         # Fraction of threshold that triggers micro-compact
+micro_keep_last = 2               # Per-tool: number of recent results to always keep
 
 # Git commit behavior
 include_commit_signature = true   # Add "Co-Authored-By" to commits
@@ -114,6 +116,8 @@ input_price = 0.4
 output_price = 2.0
 thinking = "off"                  # "off", "low", "medium", "high"
 auto_compact_threshold = 200000
+micro_compact_ratio = 0.7
+micro_keep_last = 2
 
 [[models]]
 name = "devstral-small-latest"
@@ -254,7 +258,8 @@ Custom agents are TOML files in `~/.vibe/agents/NAME.toml`.
 - `/clear` - Clear conversation history
 - `/log` - Show path to current interaction log file
 - `/debug` - Toggle debug console
-- `/compact` - Compact conversation history by summarizing
+- `/compact` - Full compact: summarize entire history into a single message
+- `/compact --micro` - Micro-compact: clear old tool results only, preserving conversation structure
 - `/status` - Display agent statistics
 - `/voice` - Configure voice settings
 - `/mcp` - Display available MCP servers (pass a server name to list its tools)
