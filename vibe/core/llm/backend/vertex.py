@@ -77,7 +77,9 @@ class VertexAnthropicAdapter(AnthropicAdapter):
         provider: ProviderConfig,
         api_key: str | None = None,
         thinking: str = "off",
+        reasoning_effort: str | None = None,
     ) -> PreparedRequest:
+        del reasoning_effort  # Vertex uses thinking budgets, not reasoning_effort
         project_id = provider.project_id
         region = provider.region
 

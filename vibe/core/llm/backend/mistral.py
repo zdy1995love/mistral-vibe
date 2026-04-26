@@ -263,8 +263,12 @@ class MistralBackend:
     ) -> LLMChunk:
         try:
             merged_messages = merge_consecutive_user_messages(messages)
-            reasoning_effort = _THINKING_TO_REASONING_EFFORT.get(model.thinking)
-            if reasoning_effort is not None:
+            reasoning_effort = (
+                model.reasoning_effort
+                if model.reasoning_effort is not None
+                else _THINKING_TO_REASONING_EFFORT.get(model.thinking)
+            )
+            if reasoning_effort is not None and reasoning_effort != "none":
                 temperature = 1.0
 
             response = await self._get_client().chat.complete_async(
@@ -342,8 +346,12 @@ class MistralBackend:
     ) -> AsyncGenerator[LLMChunk, None]:
         try:
             merged_messages = merge_consecutive_user_messages(messages)
-            reasoning_effort = _THINKING_TO_REASONING_EFFORT.get(model.thinking)
-            if reasoning_effort is not None:
+            reasoning_effort = (
+                model.reasoning_effort
+                if model.reasoning_effort is not None
+                else _THINKING_TO_REASONING_EFFORT.get(model.thinking)
+            )
+            if reasoning_effort is not None and reasoning_effort != "none":
                 temperature = 1.0
 
             stream = await self._get_client().chat.stream_async(

@@ -323,6 +323,7 @@ class ModelConfig(BaseModel):
     input_price: float = 0.0  # Price per million input tokens
     output_price: float = 0.0  # Price per million output tokens
     thinking: Literal["off", "low", "medium", "high", "max"] = "off"
+    reasoning_effort: Literal["none", "high"] | None = None
     auto_compact_threshold: int = 200_000
 
     _default_alias_to_name = model_validator(mode="before")(_default_alias_to_name)
