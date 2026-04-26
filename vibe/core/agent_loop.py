@@ -48,6 +48,7 @@ from vibe.core.middleware import (
     TurnLimitMiddleware,
     make_plan_agent_reminder,
 )
+from vibe.core.compact.micro import MicroCompactMiddleware
 from vibe.core.plan_session import PlanSession
 from vibe.core.prompts import UtilityPrompt
 from vibe.core.rewind import RewindManager
@@ -555,6 +556,7 @@ class AgentLoop:
         if self._max_price is not None:
             self.middleware_pipeline.add(PriceLimitMiddleware(self._max_price))
 
+        self.middleware_pipeline.add(MicroCompactMiddleware())
         self.middleware_pipeline.add(AutoCompactMiddleware())
         if self.config.context_warnings:
             self.middleware_pipeline.add(ContextWarningMiddleware(0.5))
