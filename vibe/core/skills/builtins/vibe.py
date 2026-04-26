@@ -73,6 +73,7 @@ api_timeout = 720.0               # API request timeout in seconds
 auto_compact_threshold = 200000   # Token count before auto-compaction (full compact)
 micro_compact_ratio = 0.7         # Fraction of threshold that triggers micro-compact
 micro_keep_last = 2               # Per-tool: number of recent results to always keep
+output_style = "default"          # Output style: "default" | "concise" | "learner" | <user file>
 
 # Git commit behavior
 include_commit_signature = true   # Add "Co-Authored-By" to commits
@@ -259,6 +260,8 @@ Custom agents are TOML files in `~/.vibe/agents/NAME.toml`.
 - `/compact` - Full compact: summarize entire history into a single message
 - `/compact --micro` - Micro-compact: clear old tool results only, preserving conversation structure
 - `/plan` - Toggle plan mode: read-only discussion that blocks write/exec tools
+- `/reasoning` (or `/effort`) - Toggle reasoning for the active model; pass `on` / `off` to set explicitly
+- `/style` (or `/output-style`) - List or switch output style (`default` / `concise` / `learner` / user-defined). Custom styles live in `~/.vibe/prompts/styles/NAME.md`
 - `/status` - Display agent statistics
 - `/voice` - Configure voice settings
 - `/mcp` - Display available MCP servers (pass a server name to list its tools)
