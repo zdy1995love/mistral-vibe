@@ -55,6 +55,7 @@ from vibe.cli.textual_ui.widgets.banner.banner import Banner
 from vibe.cli.textual_ui.widgets.chat_input import ChatInputContainer
 from vibe.cli.textual_ui.widgets.chat_input.text_area import ChatTextArea
 from vibe.cli.textual_ui.widgets.compact import CompactMessage
+from vibe.core.compact.micro import micro_compact
 from vibe.cli.textual_ui.widgets.config_app import ConfigApp
 from vibe.cli.textual_ui.widgets.context_progress import ContextProgress, TokenState
 from vibe.cli.textual_ui.widgets.debug_console import DebugConsole
@@ -1767,7 +1768,7 @@ class VibeApp(App):  # noqa: PLR0904
                 )
             )
 
-    async def _compact_history(self, **kwargs: Any) -> None:
+    async def _compact_history(self, cmd_args: str = "", **kwargs: Any) -> None:
         if self._agent_running:
             await self._mount_and_scroll(
                 ErrorMessage(
@@ -1784,6 +1785,30 @@ class VibeApp(App):  # noqa: PLR0904
                     collapsed=self._tools_collapsed,
                 )
             )
+            return
+
+        if "--micro" in cmd_args.split():
+            threshold = self.agent_loop.config.get_active_model().auto_compact_threshold
+            old_tokens = self.agent_loop.stats.context_tokens
+            tokens_freed = micro_compact(
+                self.agent_loop.messages,
+                threshold,
+                self.agent_loop.config.micro_compact_ratio,
+                self.agent_loop.config.micro_keep_last,
+                self.agent_loop.stats,
+            )
+            if tokens_freed > 0:
+                new_tokens = self.agent_loop.stats.context_tokens
+                msg = CompactMessage()
+                msg.set_complete(old_tokens=old_tokens, new_tokens=new_tokens)
+                await self._mount_and_scroll(msg)
+            else:
+                await self._mount_and_scroll(
+                    ErrorMessage(
+                        "Nothing to micro-compact (no old tool results found above threshold).",
+                        collapsed=self._tools_collapsed,
+                    )
+                )
             return
 
         if not self.event_handler:
