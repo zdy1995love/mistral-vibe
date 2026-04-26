@@ -7,8 +7,9 @@ from vibe.core.tools.base import ToolPermission
 
 
 class TestPlanAgentWriteFileResolvePermission:
-    """Plan agent sets write_file to NEVER with allowlist=[plans/*].
-    resolve_permission must use this, not the base config.
+    """Plan agent sets write_file to ASK with allowlist=[plans/*].
+    Blocking is enforced at the dispatch gate; resolve_permission returns ASK
+    so the tool is not silently hidden from the LLM's perspective.
     """
 
     def test_write_file_to_non_plan_path_denied_in_plan_mode(self) -> None:
@@ -22,10 +23,10 @@ class TestPlanAgentWriteFileResolvePermission:
 
         ctx = tool.resolve_permission(args)
 
-        # With plan agent override: permission should be NEVER
-        # (unless the path matches the plans allowlist)
+        # With plan agent override: permission is ASK (dispatch gate blocks, not
+        # permission layer, so the tool remains visible to the LLM).
         assert ctx is not None
-        assert ctx.permission == ToolPermission.NEVER
+        assert ctx.permission == ToolPermission.ASK
 
     def test_write_file_to_plan_path_allowed_in_plan_mode(self) -> None:
         config = build_test_vibe_config()
@@ -57,7 +58,7 @@ class TestPlanAgentWriteFileResolvePermission:
         ctx = tool.resolve_permission(args)
 
         assert ctx is not None
-        assert ctx.permission == ToolPermission.NEVER
+        assert ctx.permission == ToolPermission.ASK
 
 
 class TestAcceptEditsAgentResolvePermission:
@@ -95,17 +96,17 @@ class TestAgentOverrideNotLeakedAcrossSwitches:
         tool = agent.tool_manager.get("write_file")
         from vibe.core.tools.builtins.write_file import WriteFileArgs
 
-        args = WriteFileArgs(path="/some/file.py", content="hello")
+        plan_path = str(PLANS_DIR.path / "my-plan.md")
+        args = WriteFileArgs(path=plan_path, content="# Plan")
 
-        # In plan mode: should be NEVER
+        # In plan mode: plan path is in the allowlist → ALWAYS
         ctx_plan = tool.resolve_permission(args)
         assert ctx_plan is not None
-        assert ctx_plan.permission == ToolPermission.NEVER
+        assert ctx_plan.permission == ToolPermission.ALWAYS
 
         # Switch to default
         agent.agent_manager.switch_profile(BuiltinAgentName.DEFAULT)
 
-        # In default mode: should NOT be NEVER
+        # In default mode: plan allowlist is gone → no longer ALWAYS
         ctx_default = tool.resolve_permission(args)
-        assert ctx_default is not None
-        assert ctx_default.permission != ToolPermission.NEVER
+        assert ctx_default is None or ctx_default.permission != ToolPermission.ALWAYS

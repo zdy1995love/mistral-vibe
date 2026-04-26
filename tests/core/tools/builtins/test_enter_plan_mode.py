@@ -53,8 +53,7 @@ class _FakeUserInput:
 
 def _make_tool() -> EnterPlanMode:
     return EnterPlanMode(
-        config_getter=lambda: EnterPlanModeConfig(),
-        state=BaseToolState(),
+        config_getter=lambda: EnterPlanModeConfig(), state=BaseToolState()
     )
 
 

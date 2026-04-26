@@ -1791,7 +1791,9 @@ class VibeApp(App):  # noqa: PLR0904
         currently_in_plan = (
             self.agent_loop.agent_manager.active_profile.name == BuiltinAgentName.PLAN
         )
-        target = BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        target = (
+            BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        )
         self.agent_loop.agent_manager.switch_profile(target)
         self._on_profile_changed()
 

@@ -49,7 +49,9 @@ class TestToggleHandlerLogic:
 
         currently_in_plan = BuiltinAgentName.DEFAULT == BuiltinAgentName.PLAN
         assert currently_in_plan is False
-        target = BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        target = (
+            BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        )
         assert target == BuiltinAgentName.PLAN
 
     def test_toggle_target_from_plan(self) -> None:
@@ -57,5 +59,7 @@ class TestToggleHandlerLogic:
 
         currently_in_plan = BuiltinAgentName.PLAN == BuiltinAgentName.PLAN
         assert currently_in_plan is True
-        target = BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        target = (
+            BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
+        )
         assert target == BuiltinAgentName.DEFAULT

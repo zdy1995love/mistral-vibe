@@ -827,9 +827,7 @@ class AgentLoop:
             and tool_instance.__class__.mutates_state
         ):
             yield self._tool_failure_event(
-                tool_call,
-                "[Plan mode: write operations disabled]",
-                span=span,
+                tool_call, "[Plan mode: write operations disabled]", span=span
             )
             return
 

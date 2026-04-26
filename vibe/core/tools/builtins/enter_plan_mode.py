@@ -90,10 +90,7 @@ class EnterPlanMode(
                                 "tools will run."
                             ),
                         ),
-                        Choice(
-                            label="No",
-                            description="Stay in the current profile.",
-                        ),
+                        Choice(label="No", description="Stay in the current profile."),
                     ],
                 )
             ]
@@ -124,6 +121,5 @@ class EnterPlanMode(
             return
 
         yield EnterPlanModeResult(
-            switched=False,
-            message="Staying in the current profile.",
+            switched=False, message="Staying in the current profile."
         )

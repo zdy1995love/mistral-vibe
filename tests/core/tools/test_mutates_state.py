@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-import pytest
-
 from vibe.core.tools.base import BaseTool, BaseToolConfig, BaseToolState
 
 
@@ -87,7 +85,8 @@ class TestBuiltinMutatesStateMatrix:
 
 class TestMCPToolDefault:
     """MCP tools subclass BaseTool without overriding the class attribute,
-    so they must inherit True (safe side: external servers may mutate)."""
+    so they must inherit True (safe side: external servers may mutate).
+    """
 
     def test_mcp_tool_class_inherits_true(self) -> None:
         from vibe.core.tools.mcp.tools import MCPTool

@@ -246,8 +246,8 @@ class TestAgentProfileOverrides:
         tools = overrides["tools"]
         assert "write_file" in tools
         assert "search_replace" in tools
-        assert tools["write_file"]["permission"] == "never"
-        assert tools["search_replace"]["permission"] == "never"
+        assert tools["write_file"]["permission"] == "ask"
+        assert tools["search_replace"]["permission"] == "ask"
         assert len(tools["write_file"]["allowlist"]) > 0
         assert len(tools["search_replace"]["allowlist"]) > 0
 
@@ -361,9 +361,9 @@ class TestAgentSwitchAgent:
         assert "read_file" in plan_tool_names
         assert agent.agent_profile.name == BuiltinAgentName.PLAN
 
-        # Verify write tools have "never" base permission
+        # Write tools have "ask" permission; blocking is done by the dispatch gate
         write_config = agent.tool_manager.get_tool_config("write_file")
-        assert write_config.permission == ToolPermission.NEVER
+        assert write_config.permission == ToolPermission.ASK
 
     @pytest.mark.asyncio
     async def test_switch_from_plan_to_default_restores_tools(
@@ -471,13 +471,13 @@ class TestPlanAgentToolRestriction:
         assert "write_file" in tool_names
         assert "search_replace" in tool_names
 
-        # But write tools have restricted permissions
+        # Write tools have "ask" permission; blocking is done by the dispatch gate
         write_config = agent.tool_manager.get_tool_config("write_file")
-        assert write_config.permission == ToolPermission.NEVER
+        assert write_config.permission == ToolPermission.ASK
         assert len(write_config.allowlist) > 0
 
         sr_config = agent.tool_manager.get_tool_config("search_replace")
-        assert sr_config.permission == ToolPermission.NEVER
+        assert sr_config.permission == ToolPermission.ASK
         assert len(sr_config.allowlist) > 0
 
 
