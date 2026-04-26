@@ -166,8 +166,7 @@ class EventHandler:
             self.current_streaming_message = None
 
         if self.current_streaming_reasoning is None:
-            tools_collapsed = self.get_tools_collapsed()
-            msg = ReasoningMessage(event.content, collapsed=tools_collapsed)
+            msg = ReasoningMessage(event.content, collapsed=False)
             self.current_streaming_reasoning = msg
             await self.mount_callback(msg)
         else:
