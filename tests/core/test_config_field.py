@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import tomllib
+from pathlib import Path
 from typing import Annotated
 
+import tomli_w
 from pydantic import BaseModel, Field
 import pytest
 
+from tests.conftest import build_test_vibe_config
+from vibe.core.config import VibeConfig
 from vibe.core.config.schema import (
     DuplicateMergeMetadataError,
     MergeFieldMetadata,
@@ -214,3 +219,33 @@ class TestAnnotatedFieldInModel:
         assert cfg.tools["search"].enabled is True
         assert cfg.tools["code"].timeout == 10
         assert cfg.allowed_hosts is None
+
+
+class TestMicroCompactConfig:
+    def test_micro_compact_ratio_default(self) -> None:
+        cfg = build_test_vibe_config()
+        assert cfg.micro_compact_ratio == 0.7
+
+    def test_micro_keep_last_default(self) -> None:
+        cfg = build_test_vibe_config()
+        assert cfg.micro_keep_last == 2
+
+    def test_micro_compact_ratio_from_toml(self, config_dir: Path) -> None:
+        config_file = config_dir / "config.toml"
+        with config_file.open("rb") as f:
+            data = tomllib.load(f)
+        data["micro_compact_ratio"] = 0.5
+        with config_file.open("wb") as f:
+            tomli_w.dump(data, f)
+        cfg = VibeConfig()
+        assert cfg.micro_compact_ratio == 0.5
+
+    def test_micro_keep_last_from_toml(self, config_dir: Path) -> None:
+        config_file = config_dir / "config.toml"
+        with config_file.open("rb") as f:
+            data = tomllib.load(f)
+        data["micro_keep_last"] = 5
+        with config_file.open("wb") as f:
+            tomli_w.dump(data, f)
+        cfg = VibeConfig()
+        assert cfg.micro_keep_last == 5
