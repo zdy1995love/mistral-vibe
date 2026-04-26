@@ -90,10 +90,15 @@ CHAT_AGENT_TOOLS = ["grep", "read_file", "ask_user_question", "task"]
 def _plan_overrides() -> dict[str, Any]:
     plans_pattern = str(PLANS_DIR.path / "*")
     return {
+        # Plans dir stays writable so the planning agent can edit plan files.
+        # The dispatch-layer mutates_state gate now does the actual blocking;
+        # downgrade "never" to "ask" so the allowlist path still works after exit.
         "tools": {
-            "write_file": {"permission": "never", "allowlist": [plans_pattern]},
-            "search_replace": {"permission": "never", "allowlist": [plans_pattern]},
-        }
+            "write_file": {"permission": "ask", "allowlist": [plans_pattern]},
+            "search_replace": {"permission": "ask", "allowlist": [plans_pattern]},
+        },
+        # Hide the entry tool while already in plan; ExitPlanMode is the way out.
+        "base_disabled": ["enter_plan_mode"],
     }
 
 
