@@ -248,7 +248,37 @@ def get_universal_system_prompt(
     *,
     include_git_status: bool = True,
 ) -> str:
-    sections = [config.system_prompt]
+    import logging
+    import re
+
+    from vibe.core.output_styles import StyleManager, StyleNotFoundError
+
+    sections: list[str] = []
+
+    # Output style preamble. default.md is comment-only so this is a no-op for
+    # the default case (preserves byte-equivalence with the legacy prompt).
+    _style_mgr = StyleManager()
+    try:
+        _style_text = _style_mgr.load(config.output_style)
+    except StyleNotFoundError:
+        # Misconfigured style name: log and fall back silently. The system
+        # prompt is assembled on every turn; a typo in config.toml should not
+        # break the session.
+        logging.getLogger(__name__).warning(
+            "Unknown output_style %r; falling back to 'default'",
+            config.output_style,
+        )
+        _style_text = _style_mgr.load("default")
+
+    # Only prepend if there is visible content (i.e. after stripping HTML
+    # comments). default.md is comment-only, so its visible body is empty and
+    # we skip prepending — keeping the assembled prompt byte-identical to the
+    # pre-output-styles baseline.
+    _style_visible = re.sub(r"<!--.*?-->", "", _style_text, flags=re.DOTALL).strip()
+    if _style_visible:
+        sections.append(_style_text)
+
+    sections.append(config.system_prompt)
 
     if config.include_commit_signature:
         sections.append(_add_commit_signature())
