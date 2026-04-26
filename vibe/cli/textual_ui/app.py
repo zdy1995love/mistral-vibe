@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+import tomllib
 from typing import Any, ClassVar, assert_never, cast
 from weakref import WeakKeyDictionary
 import webbrowser
@@ -113,6 +114,7 @@ from vibe.core.audio_player.audio_player import AudioPlayer
 from vibe.core.audio_recorder import AudioRecorder
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
 from vibe.core.config import VibeConfig
+from vibe.core.config.harness_files import get_harness_files_manager
 from vibe.core.data_retention import DATA_RETENTION_MESSAGE
 from vibe.core.log_reader import LogReader
 from vibe.core.logger import logger
@@ -1393,6 +1395,67 @@ class VibeApp(App):  # noqa: PLR0904
         if self._current_bottom_app == BottomApp.ModelPicker:
             return
         await self._switch_to_model_picker_app()
+
+    _REASONING_ON_ALIASES: ClassVar[frozenset[str]] = frozenset(
+        {"on", "high", "true", "1", "yes"}
+    )
+    _REASONING_OFF_ALIASES: ClassVar[frozenset[str]] = frozenset(
+        {"off", "none", "false", "0", "no"}
+    )
+
+    async def _set_reasoning(self, cmd_args: str = "", **kwargs: Any) -> None:
+        active = self.config.get_active_model()
+        arg = cmd_args.strip().lower()
+        currently_on = active.reasoning_effort == "high"
+
+        if not arg:
+            new_value = "none" if currently_on else "high"
+        elif arg in self._REASONING_ON_ALIASES:
+            new_value = "high"
+        elif arg in self._REASONING_OFF_ALIASES:
+            new_value = "none"
+        else:
+            await self._mount_and_scroll(
+                UserCommandMessage(
+                    f"Invalid value `{arg}`. Use `on` or `off`."
+                )
+            )
+            return
+
+        mgr = get_harness_files_manager()
+        config_file = mgr.config_file or mgr.user_config_file
+        try:
+            with config_file.open("rb") as f:
+                raw = tomllib.load(f)
+        except (FileNotFoundError, tomllib.TOMLDecodeError, OSError) as e:
+            await self._mount_and_scroll(
+                ErrorMessage(f"Could not read config: {e}")
+            )
+            return
+
+        models = raw.get("models", [])
+        target = next((m for m in models if m.get("alias") == active.alias), None)
+        if target is None:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    f"Active model `{active.alias}` not found in config file."
+                )
+            )
+            return
+
+        target["reasoning_effort"] = new_value
+        new_temperature = 0.7 if new_value == "high" else 0.3
+        target["temperature"] = new_temperature
+        VibeConfig.save_updates({"models": models})
+        await self._reload_config()
+
+        label = "**on** (high)" if new_value == "high" else "**off** (none)"
+        await self._mount_and_scroll(
+            UserCommandMessage(
+                f"Reasoning for `{active.alias}` is now {label}, "
+                f"temperature={new_temperature}"
+            )
+        )
 
     async def _show_proxy_setup(self, **kwargs: Any) -> None:
         if self._current_bottom_app == BottomApp.ProxySetup:
