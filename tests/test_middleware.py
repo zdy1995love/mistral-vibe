@@ -615,7 +615,9 @@ class TestMicroCompactMiddleware:
     async def test_does_not_trigger_below_threshold(self) -> None:
         cfg = build_test_vibe_config()
         messages = MessageList([
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c1", content="A" * 1000),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c1", content="A" * 1000
+            )
         ])
         stats = AgentStats()
         stats.context_tokens = 100  # well below 200_000 * 0.7 = 140_000
@@ -635,9 +637,15 @@ class TestMicroCompactMiddleware:
         # Three bash results: default micro_keep_last=2 protects the latter
         # two; the oldest (index 0, big) is the only candidate.
         messages = MessageList([
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c1", content=big_content),
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c2", content="recent1"),
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c3", content="recent2"),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c1", content=big_content
+            ),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c2", content="recent1"
+            ),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c3", content="recent2"
+            ),
         ])
         stats = AgentStats()
         stats.context_tokens = 150_000  # above 200_000 * 0.7 = 140_000
@@ -647,7 +655,7 @@ class TestMicroCompactMiddleware:
         result = await mw.before_turn(ctx)
 
         assert result.action == MiddlewareAction.CONTINUE
-        assert "[Old tool result cleared" in messages[0].content
+        assert "[Old tool result cleared" in (messages[0].content or "")
         assert messages[1].content == "recent1"
         assert messages[2].content == "recent2"
         assert stats.cleared_tool_results >= 1
@@ -655,7 +663,8 @@ class TestMicroCompactMiddleware:
     @pytest.mark.asyncio
     async def test_micro_runs_before_auto_compact_in_pipeline(self) -> None:
         """MicroCompact runs first; if it brings tokens below threshold,
-        AutoCompact does NOT trigger."""
+        AutoCompact does NOT trigger.
+        """
         from vibe.core.middleware import AutoCompactMiddleware
 
         cfg = build_test_vibe_config()
@@ -663,9 +672,15 @@ class TestMicroCompactMiddleware:
         big_content = "C" * 600_000  # ~150_000 tokens
         # Three bash results so the oldest is clearable under default keep_last=2
         messages = MessageList([
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c1", content=big_content),
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c2", content="recent1"),
-            LLMMessage(role=Role.tool, name="bash", tool_call_id="c3", content="recent2"),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c1", content=big_content
+            ),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c2", content="recent1"
+            ),
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c3", content="recent2"
+            ),
         ])
         stats = AgentStats()
         stats.context_tokens = 150_000

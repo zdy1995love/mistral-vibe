@@ -55,7 +55,6 @@ from vibe.cli.textual_ui.widgets.banner.banner import Banner
 from vibe.cli.textual_ui.widgets.chat_input import ChatInputContainer
 from vibe.cli.textual_ui.widgets.chat_input.text_area import ChatTextArea
 from vibe.cli.textual_ui.widgets.compact import CompactMessage
-from vibe.core.compact.micro import micro_compact
 from vibe.cli.textual_ui.widgets.config_app import ConfigApp
 from vibe.cli.textual_ui.widgets.context_progress import ContextProgress, TokenState
 from vibe.cli.textual_ui.widgets.debug_console import DebugConsole
@@ -114,6 +113,7 @@ from vibe.core.agents import AgentProfile
 from vibe.core.audio_player.audio_player import AudioPlayer
 from vibe.core.audio_recorder import AudioRecorder
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
+from vibe.core.compact.micro import micro_compact
 from vibe.core.config import VibeConfig
 from vibe.core.config.harness_files import get_harness_files_manager
 from vibe.core.data_retention import DATA_RETENTION_MESSAGE
@@ -1397,12 +1397,20 @@ class VibeApp(App):  # noqa: PLR0904
             return
         await self._switch_to_model_picker_app()
 
-    _REASONING_ON_ALIASES: ClassVar[frozenset[str]] = frozenset(
-        {"on", "high", "true", "1", "yes"}
-    )
-    _REASONING_OFF_ALIASES: ClassVar[frozenset[str]] = frozenset(
-        {"off", "none", "false", "0", "no"}
-    )
+    _REASONING_ON_ALIASES: ClassVar[frozenset[str]] = frozenset({
+        "on",
+        "high",
+        "true",
+        "1",
+        "yes",
+    })
+    _REASONING_OFF_ALIASES: ClassVar[frozenset[str]] = frozenset({
+        "off",
+        "none",
+        "false",
+        "0",
+        "no",
+    })
 
     async def _set_reasoning(self, cmd_args: str = "", **kwargs: Any) -> None:
         active = self.config.get_active_model()
@@ -1417,9 +1425,7 @@ class VibeApp(App):  # noqa: PLR0904
             new_value = "none"
         else:
             await self._mount_and_scroll(
-                UserCommandMessage(
-                    f"Invalid value `{arg}`. Use `on` or `off`."
-                )
+                UserCommandMessage(f"Invalid value `{arg}`. Use `on` or `off`.")
             )
             return
 
@@ -1429,18 +1435,14 @@ class VibeApp(App):  # noqa: PLR0904
             with config_file.open("rb") as f:
                 raw = tomllib.load(f)
         except (FileNotFoundError, tomllib.TOMLDecodeError, OSError) as e:
-            await self._mount_and_scroll(
-                ErrorMessage(f"Could not read config: {e}")
-            )
+            await self._mount_and_scroll(ErrorMessage(f"Could not read config: {e}"))
             return
 
         models = raw.get("models", [])
         target = next((m for m in models if m.get("alias") == active.alias), None)
         if target is None:
             await self._mount_and_scroll(
-                ErrorMessage(
-                    f"Active model `{active.alias}` not found in config file."
-                )
+                ErrorMessage(f"Active model `{active.alias}` not found in config file.")
             )
             return
 

@@ -31,7 +31,7 @@ class ThinkTagExtractor:
             if idx >= 0:
                 pre = text[:idx]
                 (reasoning_parts if self.in_think else content_parts).append(pre)
-                text = text[idx + len(target):]
+                text = text[idx + len(target) :]
                 self.in_think = not self.in_think
                 continue
 

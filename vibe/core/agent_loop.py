@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from vibe.cli.terminal_detect import detect_terminal
 from vibe.core.agents.manager import AgentManager
 from vibe.core.agents.models import AgentProfile, BuiltinAgentName
+from vibe.core.compact.micro import MicroCompactMiddleware
 from vibe.core.config import ModelConfig, ProviderConfig, VibeConfig
 from vibe.core.llm.backend.factory import BACKEND_FACTORY
 from vibe.core.llm.exceptions import BackendError
@@ -48,7 +49,6 @@ from vibe.core.middleware import (
     TurnLimitMiddleware,
     make_plan_agent_reminder,
 )
-from vibe.core.compact.micro import MicroCompactMiddleware
 from vibe.core.plan_session import PlanSession
 from vibe.core.prompts import UtilityPrompt
 from vibe.core.rewind import RewindManager

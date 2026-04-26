@@ -91,9 +91,7 @@ class OpenAIAdapter(APIAdapter):
 
         if send_thinking_blocks:
             content = msg_dict.get("content") or ""
-            blocks: list[dict[str, Any]] = [
-                {"type": "thinking", "thinking": reasoning}
-            ]
+            blocks: list[dict[str, Any]] = [{"type": "thinking", "thinking": reasoning}]
             if content:
                 blocks.append({"type": "text", "text": content})
             msg_dict["content"] = blocks
@@ -228,10 +226,7 @@ def _apply_think_extractor_streaming(
     r, c = extractor.feed(msg.content)
     new_reasoning = (msg.reasoning_content or "") + r
     new_msg = msg.model_copy(
-        update={
-            "content": c or None,
-            "reasoning_content": new_reasoning or None,
-        }
+        update={"content": c or None, "reasoning_content": new_reasoning or None}
     )
     return LLMChunk(message=new_msg, usage=chunk.usage)
 

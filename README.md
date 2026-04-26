@@ -1,5 +1,12 @@
 # Mistral Vibe
 
+## Fork Changelog
+
+| Date       | Change                                                              | Reason                                                                                                  |
+| ---------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 2026-04-26 | End-to-end reasoning support: `reasoning_effort` config, `/reasoning` runtime toggle, past reasoning replayed as thinking blocks, CLI expands reasoning by default | Make reasoning a first-class, controllable feature so multi-turn chats keep continuity of thought       |
+| 2026-04-26 | Client-side `ThinkTagExtractor` for vLLM streaming parser           | Support self-hosted vLLM models that emit `<think>` inline instead of as a separate `reasoning` field   |
+
 [![PyPI Version](https://img.shields.io/pypi/v/mistral-vibe)](https://pypi.org/project/mistral-vibe)
 [![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/release/python-3120/)
 [![CI Status](https://github.com/mistralai/mistral-vibe/actions/workflows/ci.yml/badge.svg)](https://github.com/mistralai/mistral-vibe/actions/workflows/ci.yml)

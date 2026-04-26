@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-import tomllib
 from pathlib import Path
+import tomllib
 from typing import Annotated
 
-import tomli_w
 from pydantic import BaseModel, Field
 import pytest
+import tomli_w
 
 from tests.conftest import build_test_vibe_config
 from vibe.core.config import VibeConfig

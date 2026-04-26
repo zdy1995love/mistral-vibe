@@ -3,9 +3,15 @@ from __future__ import annotations
 from vibe.core.middleware import ConversationContext, MiddlewareResult, ResetReason
 from vibe.core.types import AgentStats, MessageList, Role
 
-CLEARABLE_TOOLS: frozenset[str] = frozenset(
-    {"bash", "read_file", "write_file", "search_replace", "grep", "web_fetch", "web_search"}
-)
+CLEARABLE_TOOLS: frozenset[str] = frozenset({
+    "bash",
+    "read_file",
+    "write_file",
+    "search_replace",
+    "grep",
+    "web_fetch",
+    "web_search",
+})
 
 _CLEARED_MARKER = "[Old tool result cleared"
 
