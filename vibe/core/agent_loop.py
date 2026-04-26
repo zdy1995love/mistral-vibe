@@ -818,6 +818,21 @@ class AgentLoop:
             yield self._tool_failure_event(tool_call, error_msg, span=span)
             return
 
+        # Plan-mode write gate: block tools that mutate state when the active
+        # agent profile is PLAN. Read-only tools (mutates_state=False) and tools
+        # called outside plan mode fall through unchanged. The error string is
+        # consumed verbatim by users and tests — do not change it.
+        if (
+            self.agent_manager.active_profile.name == BuiltinAgentName.PLAN
+            and tool_instance.__class__.mutates_state
+        ):
+            yield self._tool_failure_event(
+                tool_call,
+                "[Plan mode: write operations disabled]",
+                span=span,
+            )
+            return
+
         decision: ToolDecision | None = None
         try:
             decision = await self._should_execute_tool(
