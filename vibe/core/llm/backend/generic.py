@@ -11,6 +11,7 @@ import httpx
 from vibe.core.llm.backend.anthropic import AnthropicAdapter
 from vibe.core.llm.backend.base import APIAdapter, PreparedRequest
 from vibe.core.llm.backend.reasoning_adapter import ReasoningAdapter
+from vibe.core.llm.backend.think_tag_extractor import ThinkTagExtractor
 from vibe.core.llm.exceptions import BackendErrorBuilder
 from vibe.core.llm.message_utils import merge_consecutive_user_messages
 from vibe.core.types import (
@@ -196,6 +197,39 @@ class OpenAIAdapter(APIAdapter):
         return LLMChunk(message=message, usage=usage)
 
 
+def _apply_think_extractor_oneshot(chunk: LLMChunk) -> LLMChunk:
+    msg = chunk.message
+    content = msg.content
+    if msg.reasoning_content or not content or "[THINK]" not in content:
+        return chunk
+    ext = ThinkTagExtractor()
+    r, c = ext.feed(content)
+    rt, ct = ext.flush()
+    r += rt
+    c += ct
+    new_msg = msg.model_copy(
+        update={"content": c or None, "reasoning_content": r or None}
+    )
+    return LLMChunk(message=new_msg, usage=chunk.usage)
+
+
+def _apply_think_extractor_streaming(
+    chunk: LLMChunk, extractor: ThinkTagExtractor
+) -> LLMChunk:
+    msg = chunk.message
+    if not msg.content:
+        return chunk
+    r, c = extractor.feed(msg.content)
+    new_reasoning = (msg.reasoning_content or "") + r
+    new_msg = msg.model_copy(
+        update={
+            "content": c or None,
+            "reasoning_content": new_reasoning or None,
+        }
+    )
+    return LLMChunk(message=new_msg, usage=chunk.usage)
+
+
 _ADAPTERS: dict[str, APIAdapter] = {
     "openai": OpenAIAdapter(),
     "anthropic": AnthropicAdapter(),
@@ -306,7 +340,10 @@ class GenericBackend:
 
         try:
             res_data, _ = await self._make_request(url, req.body, headers)
-            return adapter.parse_response(res_data, self._provider)
+            chunk = adapter.parse_response(res_data, self._provider)
+            if self._provider.send_thinking_blocks:
+                chunk = _apply_think_extractor_oneshot(chunk)
+            return chunk
 
         except httpx.HTTPStatusError as e:
             raise BackendErrorBuilder.build_http_error(
@@ -373,9 +410,26 @@ class GenericBackend:
         base = req.base_url or self._provider.api_base
         url = f"{base}{req.endpoint}"
 
+        extractor: ThinkTagExtractor | None = (
+            ThinkTagExtractor() if self._provider.send_thinking_blocks else None
+        )
         try:
             async for res_data in self._make_streaming_request(url, req.body, headers):
-                yield adapter.parse_response(res_data, self._provider)
+                chunk = adapter.parse_response(res_data, self._provider)
+                if extractor is not None:
+                    chunk = _apply_think_extractor_streaming(chunk, extractor)
+                yield chunk
+            if extractor is not None:
+                tail_r, tail_c = extractor.flush()
+                if tail_r or tail_c:
+                    yield LLMChunk(
+                        message=LLMMessage(
+                            role=Role.assistant,
+                            content=tail_c or None,
+                            reasoning_content=tail_r or None,
+                        ),
+                        usage=LLMUsage(prompt_tokens=0, completion_tokens=0),
+                    )
 
         except httpx.HTTPStatusError as e:
             raise BackendErrorBuilder.build_http_error(
