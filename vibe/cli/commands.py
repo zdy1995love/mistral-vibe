@@ -118,6 +118,14 @@ class CommandRegistry:
                 description="Show data retention information",
                 handler="_show_data_retention",
             ),
+            "reasoning": Command(
+                aliases=frozenset(["/reasoning", "/effort"]),
+                description=(
+                    "Toggle reasoning for the active model. "
+                    "Pass `on` / `off` to set explicitly."
+                ),
+                handler="_set_reasoning",
+            ),
         }
 
         for command in excluded_commands:
