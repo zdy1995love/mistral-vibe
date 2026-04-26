@@ -469,7 +469,9 @@ class AnthropicAdapter(APIAdapter):
         provider: ProviderConfig,
         api_key: str | None = None,
         thinking: str = "off",
+        reasoning_effort: str | None = None,
     ) -> PreparedRequest:
+        del reasoning_effort  # Anthropic uses thinking budgets, not reasoning_effort
         system_prompt, converted_messages = self._mapper.prepare_messages(messages)
         converted_tools = self._mapper.prepare_tools(tools)
         converted_tool_choice = self._mapper.prepare_tool_choice(tool_choice)

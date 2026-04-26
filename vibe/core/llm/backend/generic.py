@@ -38,12 +38,16 @@ class OpenAIAdapter(APIAdapter):
         tools: list[AvailableTool] | None,
         max_tokens: int | None,
         tool_choice: StrToolChoice | AvailableTool | None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "model": model_name,
             "messages": converted_messages,
             "temperature": temperature,
         }
+
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
 
         if tools:
             payload["tools"] = [tool.model_dump(exclude_none=True) for tool in tools]
@@ -91,7 +95,9 @@ class OpenAIAdapter(APIAdapter):
         provider: ProviderConfig,
         api_key: str | None = None,
         thinking: str = "off",
+        reasoning_effort: str | None = None,
     ) -> PreparedRequest:
+        del thinking  # OpenAI-style reasoning is controlled via reasoning_effort
         merged_messages = merge_consecutive_user_messages(messages)
         field_name = provider.reasoning_field_name
         converted_messages = [
@@ -106,7 +112,13 @@ class OpenAIAdapter(APIAdapter):
         ]
 
         payload = self.build_payload(
-            model_name, converted_messages, temperature, tools, max_tokens, tool_choice
+            model_name,
+            converted_messages,
+            temperature,
+            tools,
+            max_tokens,
+            tool_choice,
+            reasoning_effort=reasoning_effort,
         )
 
         if enable_streaming:
@@ -257,6 +269,7 @@ class GenericBackend:
             provider=self._provider,
             api_key=api_key,
             thinking=model.thinking,
+            reasoning_effort=model.reasoning_effort,
         )
 
         headers = req.headers
@@ -325,6 +338,7 @@ class GenericBackend:
             provider=self._provider,
             api_key=api_key,
             thinking=model.thinking,
+            reasoning_effort=model.reasoning_effort,
         )
 
         headers = req.headers

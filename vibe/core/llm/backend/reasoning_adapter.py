@@ -82,6 +82,7 @@ class ReasoningAdapter(APIAdapter):
         max_tokens: int | None,
         tool_choice: StrToolChoice | AvailableTool | None,
         thinking: str,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model_name,
@@ -89,7 +90,9 @@ class ReasoningAdapter(APIAdapter):
             "temperature": temperature,
         }
 
-        if thinking != "off":
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
+        elif thinking != "off":
             payload["reasoning_effort"] = thinking
 
         if tools:
@@ -120,6 +123,7 @@ class ReasoningAdapter(APIAdapter):
         provider: ProviderConfig,
         api_key: str | None = None,
         thinking: str = "off",
+        reasoning_effort: str | None = None,
     ) -> PreparedRequest:
         merged_messages = merge_consecutive_user_messages(messages)
         converted_messages = [self._convert_message(msg) for msg in merged_messages]
@@ -132,6 +136,7 @@ class ReasoningAdapter(APIAdapter):
             max_tokens=max_tokens,
             tool_choice=tool_choice,
             thinking=thinking,
+            reasoning_effort=reasoning_effort,
         )
 
         if enable_streaming:
