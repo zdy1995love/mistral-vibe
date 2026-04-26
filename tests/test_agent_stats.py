@@ -752,3 +752,21 @@ class TestStatsEdgeCases:
         await agent.reload_with_initial_messages(base_config=new_config)
 
         assert agent.config.active_model == "devstral-small"
+
+
+class TestClearedToolResults:
+    def test_field_exists_and_defaults_to_zero(self) -> None:
+        stats = AgentStats()
+        assert stats.cleared_tool_results == 0
+
+    def test_field_is_not_reset_by_reset_context_state(self) -> None:
+        stats = AgentStats()
+        stats.cleared_tool_results = 5
+        stats.reset_context_state()
+        assert stats.cleared_tool_results == 5
+
+    def test_create_fresh_does_not_copy_cleared_count(self) -> None:
+        old = AgentStats()
+        old.cleared_tool_results = 7
+        fresh = AgentStats.create_fresh(old)
+        assert fresh.cleared_tool_results == 0

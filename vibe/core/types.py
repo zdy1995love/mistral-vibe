@@ -41,6 +41,7 @@ class AgentStats(BaseModel):
     tool_calls_succeeded: int = 0
 
     context_tokens: int = 0
+    cleared_tool_results: int = 0
 
     last_turn_prompt_tokens: int = 0
     last_turn_completion_tokens: int = 0
