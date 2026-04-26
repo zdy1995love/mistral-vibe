@@ -67,6 +67,7 @@ class Todo(
     description: ClassVar[str] = (
         "Manage todos. Use action='read' to view, action='write' with complete list to update."
     )
+    mutates_state: ClassVar[bool] = False
 
     @classmethod
     def format_call_display(cls, args: TodoArgs) -> ToolCallDisplay:

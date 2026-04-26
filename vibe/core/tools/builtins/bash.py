@@ -280,6 +280,7 @@ class Bash(
     ToolUIData[BashArgs, BashResult],
 ):
     description: ClassVar[str] = "Run a one-off bash command and capture its output."
+    mutates_state: ClassVar[bool] = True
 
     @classmethod
     def format_call_display(cls, args: BashArgs) -> ToolCallDisplay:

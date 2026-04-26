@@ -60,6 +60,7 @@ class WebSearch(
     description: ClassVar[str] = (
         "Search the web for current information using Mistral's web search."
     )
+    mutates_state: ClassVar[bool] = False
 
     @classmethod
     def is_available(cls) -> bool:

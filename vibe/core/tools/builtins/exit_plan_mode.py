@@ -47,6 +47,7 @@ class ExitPlanMode(
         "Only use this tool when you have finished writing your plan to the plan file "
         "and are ready for user approval to begin implementation."
     )
+    mutates_state: ClassVar[bool] = False
 
     @classmethod
     def format_call_display(cls, args: ExitPlanModeArgs) -> ToolCallDisplay:

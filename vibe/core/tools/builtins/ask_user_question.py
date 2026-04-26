@@ -86,6 +86,7 @@ class AskUserQuestion(
         "Each question has 2-4 choices plus an automatic 'Other' option for free text. "
         "Use this to gather preferences, clarify requirements, or get decisions."
     )
+    mutates_state: ClassVar[bool] = False
 
     @classmethod
     def format_call_display(cls, args: AskUserQuestionArgs) -> ToolCallDisplay:

@@ -63,6 +63,7 @@ class Task(
         "require user interaction. The subagent runs in-memory and "
         "saves interaction logs."
     )
+    mutates_state: ClassVar[bool] = True
 
     @classmethod
     def get_call_display(cls, event: ToolCallEvent) -> ToolCallDisplay:

@@ -45,3 +45,57 @@ class TestBaseToolMutatesStateDefault:
                 yield _Result()
 
         assert FakeReader.mutates_state is False
+
+
+class TestBuiltinMutatesStateMatrix:
+    """Pin the read/write classification of every builtin tool.
+
+    Plan mode correctness depends on this matrix being right. Adding a new
+    builtin requires extending this test — that's intentional.
+    """
+
+    def test_read_only_builtins(self) -> None:
+        from vibe.core.tools.builtins.ask_user_question import AskUserQuestion
+        from vibe.core.tools.builtins.exit_plan_mode import ExitPlanMode
+        from vibe.core.tools.builtins.grep import Grep
+        from vibe.core.tools.builtins.read_file import ReadFile
+        from vibe.core.tools.builtins.todo import Todo
+        from vibe.core.tools.builtins.webfetch import WebFetch
+        from vibe.core.tools.builtins.websearch import WebSearch
+
+        assert ReadFile.mutates_state is False
+        assert Grep.mutates_state is False
+        assert WebFetch.mutates_state is False
+        assert WebSearch.mutates_state is False
+        assert AskUserQuestion.mutates_state is False
+        assert Todo.mutates_state is False
+        assert ExitPlanMode.mutates_state is False
+
+    def test_write_or_exec_builtins(self) -> None:
+        from vibe.core.tools.builtins.bash import Bash
+        from vibe.core.tools.builtins.search_replace import SearchReplace
+        from vibe.core.tools.builtins.skill import Skill
+        from vibe.core.tools.builtins.task import Task
+        from vibe.core.tools.builtins.write_file import WriteFile
+
+        assert Bash.mutates_state is True
+        assert WriteFile.mutates_state is True
+        assert SearchReplace.mutates_state is True
+        assert Skill.mutates_state is True
+        assert Task.mutates_state is True
+
+
+class TestMCPToolDefault:
+    """MCP tools subclass BaseTool without overriding the class attribute,
+    so they must inherit True (safe side: external servers may mutate)."""
+
+    def test_mcp_tool_class_inherits_true(self) -> None:
+        from vibe.core.tools.mcp.tools import MCPTool
+
+        assert MCPTool.mutates_state is True
+
+    def test_dynamic_mcp_subclass_with_no_override_is_true(self) -> None:
+        from vibe.core.tools.mcp.tools import MCPTool
+
+        DynamicMCPLike = type("DynamicMCPLike", (MCPTool,), {})
+        assert DynamicMCPLike.mutates_state is True

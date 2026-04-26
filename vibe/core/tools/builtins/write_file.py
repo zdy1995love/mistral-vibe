@@ -54,6 +54,7 @@ class WriteFile(
     description: ClassVar[str] = (
         "Create or overwrite a UTF-8 file. Fails if file exists unless 'overwrite=True'."
     )
+    mutates_state: ClassVar[bool] = True
 
     @classmethod
     def format_call_display(cls, args: WriteFileArgs) -> ToolCallDisplay:

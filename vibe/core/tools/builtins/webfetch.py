@@ -83,6 +83,7 @@ class WebFetch(
     description: ClassVar[str] = (
         "Fetch content from a URL. Converts HTML to markdown for readability."
     )
+    mutates_state: ClassVar[bool] = False
 
     @staticmethod
     def _normalize_url(url: str) -> str:

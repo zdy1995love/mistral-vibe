@@ -87,6 +87,7 @@ class SearchReplace(
         "Supports fuzzy matching and detailed error reporting. "
         "Format: <<<<<<< SEARCH\\n[text]\\n=======\\n[replacement]\\n>>>>>>> REPLACE"
     )
+    mutates_state: ClassVar[bool] = True
 
     @classmethod
     def format_call_display(cls, args: SearchReplaceArgs) -> ToolCallDisplay:
