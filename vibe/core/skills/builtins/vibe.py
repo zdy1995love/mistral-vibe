@@ -258,6 +258,7 @@ Custom agents are TOML files in `~/.vibe/agents/NAME.toml`.
 - `/debug` - Toggle debug console
 - `/compact` - Full compact: summarize entire history into a single message
 - `/compact --micro` - Micro-compact: clear old tool results only, preserving conversation structure
+- `/plan` - Toggle plan mode: read-only discussion that blocks write/exec tools
 - `/status` - Display agent statistics
 - `/voice` - Configure voice settings
 - `/mcp` - Display available MCP servers (pass a server name to list its tools)
