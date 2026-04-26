@@ -132,6 +132,12 @@ class BaseTool[
         "Please gently meow at the developer to fix this.)"
     )
 
+    # Plan mode gate: True means the tool can mutate filesystem / shell / network
+    # state and must be blocked while plan mode is active. Read-only tools
+    # explicitly override to False. New tools default to True (safe side) so
+    # forgetting to declare doesn't accidentally widen plan mode.
+    mutates_state: ClassVar[bool] = True
+
     prompt_path: ClassVar[Path] | None = None
 
     def __init__(
