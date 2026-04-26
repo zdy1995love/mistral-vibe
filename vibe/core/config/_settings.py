@@ -473,6 +473,7 @@ class VibeConfig(BaseSettings):
     auto_compact_threshold: int = 200_000
     micro_compact_ratio: float = 0.7
     micro_keep_last: int = 2
+    output_style: str = "default"
 
     nuage_enabled: bool = Field(default=False, exclude=True)
     nuage_base_url: str = Field(default="https://api.mistral.ai", exclude=True)

@@ -249,3 +249,23 @@ class TestMicroCompactConfig:
             tomli_w.dump(data, f)
         cfg = VibeConfig()
         assert cfg.micro_keep_last == 5
+
+
+class TestOutputStyleConfig:
+    def test_default_is_default(self) -> None:
+        from tests.conftest import build_test_vibe_config
+
+        cfg = build_test_vibe_config()
+        assert cfg.output_style == "default"
+
+    def test_output_style_via_init(self) -> None:
+        from tests.conftest import build_test_vibe_config
+
+        cfg = build_test_vibe_config(output_style="concise")
+        assert cfg.output_style == "concise"
+
+    def test_output_style_accepts_arbitrary_string(self) -> None:
+        from tests.conftest import build_test_vibe_config
+
+        cfg = build_test_vibe_config(output_style="myteam")
+        assert cfg.output_style == "myteam"
