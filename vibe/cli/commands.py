@@ -134,6 +134,14 @@ class CommandRegistry:
                 ),
                 handler="_set_reasoning",
             ),
+            "style": Command(
+                aliases=frozenset(["/style", "/output-style"]),
+                description=(
+                    "List output styles or switch the active one. "
+                    "Pass a name (e.g. `/style concise`) to switch."
+                ),
+                handler="_set_output_style",
+            ),
         }
 
         for command in excluded_commands:

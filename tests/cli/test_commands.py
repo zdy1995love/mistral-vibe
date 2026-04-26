@@ -89,3 +89,20 @@ class TestCommandRegistry:
         assert result is not None
         _, cmd, _ = result
         assert cmd.handler == "_show_data_retention"
+
+    def test_style_alias_resolves(self) -> None:
+        registry = CommandRegistry()
+        assert registry.get_command_name("/style") == "style"
+
+    def test_output_style_alias_resolves(self) -> None:
+        registry = CommandRegistry()
+        assert registry.get_command_name("/output-style") == "style"
+
+    def test_parse_style_command_with_arg(self) -> None:
+        registry = CommandRegistry()
+        result = registry.parse_command("/style concise")
+        assert result is not None
+        cmd_name, command, cmd_args = result
+        assert cmd_name == "style"
+        assert cmd_args == "concise"
+        assert command.handler == "_set_output_style"
