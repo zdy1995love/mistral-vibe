@@ -246,7 +246,7 @@ def _resolve_output_style_section(config: VibeConfig) -> tuple[str, ...]:
     Empty tuple means either: (a) the active style file has no visible body
     after stripping HTML comments — this is how default.md preserves
     byte-equivalence with the legacy assembled prompt — or (b) the file
-    couldn't be read and fallback to default also yielded nothing visible.
+    couldn't be read and even fallback to default failed.
     """
     import logging
     import re
@@ -256,15 +256,24 @@ def _resolve_output_style_section(config: VibeConfig) -> tuple[str, ...]:
     mgr = StyleManager()
     logger = logging.getLogger(__name__)
 
+    def _safe_default() -> str | None:
+        # Symmetric fallback for both StyleNotFoundError and IO/decode
+        # paths: shipped default.md should always be readable, but if the
+        # install is corrupted we still must not crash per-turn assembly.
+        try:
+            return mgr.load("default")
+        except Exception:  # pragma: no cover — shipped default.md should always exist
+            return None
+
     try:
-        text = mgr.load(config.output_style)
+        text: str | None = mgr.load(config.output_style)
     except StyleNotFoundError:
         # Misconfigured style name: log and fall back silently. The prompt is
         # assembled every turn; a typo shouldn't brick the session.
         logger.warning(
             "Unknown output_style %r; falling back to 'default'", config.output_style
         )
-        text = mgr.load("default")
+        text = _safe_default()
     except (OSError, UnicodeDecodeError) as exc:
         # Unreadable / non-UTF-8 user file: same per-turn assembly concern.
         logger.warning(
@@ -272,10 +281,10 @@ def _resolve_output_style_section(config: VibeConfig) -> tuple[str, ...]:
             config.output_style,
             exc,
         )
-        try:
-            text = mgr.load("default")
-        except Exception:  # pragma: no cover — shipped default.md should always exist
-            return ()
+        text = _safe_default()
+
+    if text is None:
+        return ()
 
     visible = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
     return (text,) if visible else ()

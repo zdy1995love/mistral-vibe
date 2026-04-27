@@ -87,8 +87,10 @@ class TestOutputStyleInjection:
         idx_style = prompt.find("Output Style: Concise")
         assert idx_style != -1, "concise style content missing"
         # Style preamble must appear before the main system_prompt content.
-        idx_main = prompt.find("You are Vibe")
-        assert idx_main == -1 or idx_style < idx_main
+        # The default cli system prompt opens with "You are Mistral Vibe".
+        idx_main = prompt.find("You are Mistral Vibe")
+        assert idx_main != -1, "main system prompt content missing"
+        assert idx_style < idx_main, "style preamble must appear BEFORE the main prompt"
 
     def test_unknown_style_falls_back_to_default(self) -> None:
         """If config.output_style points to a non-existent style, the
@@ -136,3 +138,40 @@ class TestOutputStyleInjection:
         prompt = _build_prompt("concise")
         assert isinstance(prompt, str) and len(prompt) > 0
         assert "Output Style: Concise" not in prompt
+
+    def test_unknown_style_with_unreadable_default_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The asymmetric edge case the original fix didn't cover: typo'd
+        config.output_style triggers StyleNotFoundError, AND the shipped
+        default.md is unreadable on this install. Both fallbacks must
+        degrade silently rather than crash per-turn assembly.
+        """
+        from vibe.core.output_styles import StyleManager, StyleNotFoundError
+
+        def _fake_load(self: StyleManager, name: str) -> str:
+            if name == "default":
+                raise OSError("default.md somehow unreadable")
+            raise StyleNotFoundError(name)
+
+        monkeypatch.setattr(StyleManager, "load", _fake_load)
+        prompt = _build_prompt("nonexistent-style")
+        assert isinstance(prompt, str) and len(prompt) > 0
+        assert "Output Style:" not in prompt
+
+    def test_unreadable_user_style_with_unreadable_default_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same as above but with OSError on the user style instead of
+        StyleNotFoundError. The OSError-fallback path was already covered;
+        this asserts symmetry with the StyleNotFoundError path.
+        """
+        from vibe.core.output_styles import StyleManager
+
+        def _fake_load(self: StyleManager, name: str) -> str:
+            raise OSError(f"{name}.md unreadable")
+
+        monkeypatch.setattr(StyleManager, "load", _fake_load)
+        prompt = _build_prompt("concise")
+        assert isinstance(prompt, str) and len(prompt) > 0
+        assert "Output Style:" not in prompt
