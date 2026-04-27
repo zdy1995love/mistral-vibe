@@ -91,8 +91,15 @@ def _plan_overrides() -> dict[str, Any]:
     plans_pattern = str(PLANS_DIR.path / "*")
     return {
         # Plans dir stays writable so the planning agent can edit plan files.
-        # The dispatch-layer mutates_state gate now does the actual blocking;
-        # downgrade "never" to "ask" so the allowlist path still works after exit.
+        #
+        # Why "ask" instead of "never": plan-mode safety is now enforced at the
+        # dispatch layer via BaseTool.mutates_state — _execute_tool_call short-
+        # circuits write tools before permission resolution runs. Keeping a
+        # second "never" rule here would just produce two parallel error
+        # paths with different messages. So the dispatch gate is the SINGLE
+        # choke point; if you add a future code path that calls
+        # _should_execute_tool without going through _execute_tool_call,
+        # you must re-introduce a permission-layer block too.
         "tools": {
             "write_file": {"permission": "ask", "allowlist": [plans_pattern]},
             "search_replace": {"permission": "ask", "allowlist": [plans_pattern]},
@@ -189,7 +196,11 @@ LEAN = AgentProfile(
             "thinking": "off",
         },
         "tools": {"bash": {"default_timeout": 1200}},
-        "base_disabled": ["exit_plan_mode"],
+        # Disable both plan-mode round-trip tools: the LEAN profile is a
+        # specialized model+prompt setup, and letting the LLM call
+        # enter_plan_mode would silently switch to the PLAN profile and lose
+        # the LEAN system prompt and model selection.
+        "base_disabled": ["exit_plan_mode", "enter_plan_mode"],
     },
 )
 

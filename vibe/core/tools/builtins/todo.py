@@ -67,6 +67,10 @@ class Todo(
     description: ClassVar[str] = (
         "Manage todos. Use action='read' to view, action='write' with complete list to update."
     )
+    # Intentionally read-only for plan-mode dispatch gating: action="write"
+    # mutates only an in-memory list with no filesystem/shell side-effect, so
+    # allowing it inside plan mode keeps planning ergonomic without weakening
+    # the read-only guarantee that matters (no IO, no exec).
     mutates_state: ClassVar[bool] = False
 
     @classmethod

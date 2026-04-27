@@ -33,6 +33,10 @@ class EnterPlanModeResult(BaseModel):
 
 
 class EnterPlanModeConfig(BaseToolConfig):
+    # ALWAYS bypasses the outer permission prompt because the tool itself is
+    # idempotent and side-effect-free until the inner AskUserQuestion call
+    # collects explicit user consent before flipping the profile. Same
+    # pattern as ExitPlanMode.
     permission: ToolPermission = ToolPermission.ALWAYS
 
 
