@@ -4,6 +4,7 @@ import pytest
 
 from tests.conftest import build_test_agent_loop, build_test_vibe_config
 from vibe.core.agents.models import BUILTIN_AGENTS, CHAT, AgentProfile, BuiltinAgentName
+from vibe.core.compact.micro import MicroCompactMiddleware
 from vibe.core.config import VibeConfig
 from vibe.core.middleware import (
     CHAT_AGENT_EXIT,
@@ -607,10 +608,34 @@ class TestReadOnlyAgentMiddlewareIntegration:
         assert r.action == MiddlewareAction.CONTINUE
 
 
-from vibe.core.compact.micro import MicroCompactMiddleware
-
-
 class TestMicroCompactMiddleware:
+    @pytest.mark.asyncio
+    async def test_does_not_trigger_when_threshold_disabled(self) -> None:
+        """When the active model has auto_compact_threshold <= 0 (compaction
+        disabled), MicroCompactMiddleware MUST short-circuit even at huge
+        context_tokens. Without this guard the inner ratio math collapses
+        (target_water=0, micro_threshold=0) and the function would clear
+        every eligible result. The /compact --micro UI command relies on
+        this same contract.
+        """
+        cfg = build_test_vibe_config()
+        cfg.get_active_model().auto_compact_threshold = 0
+        messages = MessageList([
+            LLMMessage(
+                role=Role.tool, name="bash", tool_call_id="c1", content="X" * 100_000
+            )
+        ])
+        stats = AgentStats()
+        stats.context_tokens = 999_999  # absurdly large; guard MUST still fire
+        ctx = ConversationContext(messages=messages, stats=stats, config=cfg)
+        mw = MicroCompactMiddleware()
+
+        result = await mw.before_turn(ctx)
+
+        assert result.action == MiddlewareAction.CONTINUE
+        assert stats.cleared_tool_results == 0
+        assert messages[0].content == "X" * 100_000
+
     @pytest.mark.asyncio
     async def test_does_not_trigger_below_threshold(self) -> None:
         cfg = build_test_vibe_config()

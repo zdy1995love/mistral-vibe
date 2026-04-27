@@ -1791,6 +1791,17 @@ class VibeApp(App):  # noqa: PLR0904
 
         if "--micro" in cmd_args.split():
             threshold = self.agent_loop.config.get_active_model().auto_compact_threshold
+            # Match MicroCompactMiddleware.before_turn: when auto-compact is
+            # disabled (threshold <= 0) the per-tool keep_last math collapses
+            # and micro_compact would clear every eligible result. Bail early.
+            if threshold <= 0:
+                await self._mount_and_scroll(
+                    ErrorMessage(
+                        "Auto-compact is disabled (threshold <= 0); micro-compact has nothing to gate on.",
+                        collapsed=self._tools_collapsed,
+                    )
+                )
+                return
             old_tokens = self.agent_loop.stats.context_tokens
             tokens_freed = micro_compact(
                 self.agent_loop.messages,
