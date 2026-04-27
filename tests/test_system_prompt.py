@@ -61,17 +61,26 @@ def _build_prompt(output_style: str) -> str:
 
 
 class TestOutputStyleInjection:
-    def test_default_style_is_byte_equivalent_to_no_prepend(self) -> None:
+    def test_default_style_is_byte_equivalent_to_no_prepend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """REGRESSION GUARD: output_style='default' must produce a system
-        prompt byte-identical to the legacy (pre-feature) assembly. The
-        default.md file is comment-only/whitespace so after .strip() it
-        contributes nothing and join over an unchanged sections list yields
-        the legacy bytes exactly.
+        prompt byte-identical to a baseline that bypasses style injection
+        entirely. Built by stubbing StyleManager.load to return "" and
+        comparing against the real default.md path.
+
+        If anyone ever lets visible content slip into default.md (a stray
+        line, removed comment markers, etc), this assertion fails — that is
+        the property the previous smoke test could not catch.
         """
-        prompt = _build_prompt("default")
-        assert "<!--" not in prompt
-        assert "default output style" not in prompt
-        assert isinstance(prompt, str) and len(prompt) > 0
+        prompt_default = _build_prompt("default")
+
+        from vibe.core.output_styles import StyleManager
+
+        monkeypatch.setattr(StyleManager, "load", lambda self, name: "")
+        prompt_baseline = _build_prompt("default")
+
+        assert prompt_default == prompt_baseline
 
     def test_concise_style_is_prepended_at_head(self) -> None:
         prompt = _build_prompt("concise")
@@ -87,3 +96,43 @@ class TestOutputStyleInjection:
         """
         prompt = _build_prompt("does-not-exist")
         assert "Output Style:" not in prompt
+
+    def test_unreadable_style_file_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A corrupt user style file (OSError / non-UTF-8 bytes) must not
+        crash system-prompt assembly — the prompt is rebuilt on every turn,
+        so any uncaught exception would brick the whole session.
+        """
+        from vibe.core.output_styles import StyleManager, StyleNotFoundError
+
+        real_load = StyleManager.load
+
+        def _fake_load(self: StyleManager, name: str) -> str:
+            if name == "concise":
+                raise OSError("permission denied")
+            return real_load(self, name)
+
+        monkeypatch.setattr(StyleManager, "load", _fake_load)
+        prompt = _build_prompt("concise")
+        assert isinstance(prompt, str) and len(prompt) > 0
+        assert "Output Style: Concise" not in prompt
+        # And StyleNotFoundError is unrelated; just confirm import works.
+        assert StyleNotFoundError is not None
+
+    def test_undecodable_style_file_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vibe.core.output_styles import StyleManager
+
+        real_load = StyleManager.load
+
+        def _fake_load(self: StyleManager, name: str) -> str:
+            if name == "concise":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")
+            return real_load(self, name)
+
+        monkeypatch.setattr(StyleManager, "load", _fake_load)
+        prompt = _build_prompt("concise")
+        assert isinstance(prompt, str) and len(prompt) > 0
+        assert "Output Style: Concise" not in prompt

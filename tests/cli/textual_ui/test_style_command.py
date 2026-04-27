@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -53,8 +54,56 @@ class TestStyleHandlerListing:
         await app._set_output_style(cmd_args="")
 
         rendered = "\n".join(_widget_content(w) for w in captured)
-        assert "concise" in rendered
-        assert "*(active)*" in rendered
+        # Tighter than just `"*(active)*" in rendered`: assert the marker
+        # lives on the same line as the active style name, and on no other.
+        active_lines = [line for line in rendered.splitlines() if "*(active)*" in line]
+        assert len(active_lines) == 1, (
+            f"Expected exactly one *(active)* line, got {active_lines!r}"
+        )
+        assert "`concise`" in active_lines[0]
+        assert "`default`" not in active_lines[0]
+        assert "`learner`" not in active_lines[0]
+
+    @pytest.mark.asyncio
+    async def test_listing_includes_user_styles(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A user-dropped style under ~/.vibe/prompts/styles/ must appear in
+        the /style listing with the *(user)* marker.
+        """
+        user_dir = tmp_path / "user_styles"
+        user_dir.mkdir()
+        (user_dir / "myteam.md").write_text(
+            "# Myteam style\nbe pithy", encoding="utf-8"
+        )
+
+        from vibe.core.output_styles import StyleManager as _StyleManager
+
+        original_init = _StyleManager.__init__
+
+        def _patched_init(
+            self: _StyleManager,
+            builtin_dir: Path | None = None,
+            user_dir_arg: Path | None = None,
+        ) -> None:
+            original_init(self, builtin_dir=builtin_dir, user_dir=user_dir)
+
+        monkeypatch.setattr(_StyleManager, "__init__", _patched_init)
+
+        app = build_test_vibe_app()
+        captured: list[Any] = []
+
+        async def _capture(widget: Any) -> None:
+            captured.append(widget)
+
+        app._mount_and_scroll = _capture  # type: ignore[method-assign]
+
+        await app._set_output_style(cmd_args="")
+
+        rendered = "\n".join(_widget_content(w) for w in captured)
+        myteam_lines = [line for line in rendered.splitlines() if "`myteam`" in line]
+        assert len(myteam_lines) == 1, rendered
+        assert "*(user)*" in myteam_lines[0]
 
 
 class TestStyleHandlerSwitch:

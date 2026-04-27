@@ -269,3 +269,25 @@ class TestOutputStyleConfig:
 
         cfg = build_test_vibe_config(output_style="myteam")
         assert cfg.output_style == "myteam"
+
+    def test_output_style_from_toml(
+        self, config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round-trip via real TOML: a misspelled key (e.g. ``output_styles``)
+        would silently default and this test would fail. Constructor-level
+        tests above can't catch that.
+        """
+        import tomli_w
+
+        from tests.conftest import get_base_config
+        from vibe.core.config import VibeConfig
+
+        # env_prefix = "VIBE_" — defeat any ambient VIBE_OUTPUT_STYLE.
+        monkeypatch.delenv("VIBE_OUTPUT_STYLE", raising=False)
+
+        base = get_base_config()
+        base["output_style"] = "concise"
+        (config_dir / "config.toml").write_text(tomli_w.dumps(base), encoding="utf-8")
+
+        cfg = VibeConfig.load()
+        assert cfg.output_style == "concise"
