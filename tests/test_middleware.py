@@ -662,35 +662,61 @@ class TestMicroCompactMiddleware:
 
     @pytest.mark.asyncio
     async def test_micro_runs_before_auto_compact_in_pipeline(self) -> None:
-        """MicroCompact runs first; if it brings tokens below threshold,
-        AutoCompact does NOT trigger.
+        """Ordering property: when registered before AutoCompact, MicroCompact
+        clears old tool results first and lowers ``context_tokens`` so the
+        subsequent AutoCompact sees a value below threshold and does NOT fire.
+
+        Critical: ``context_tokens`` must START above the auto-compact
+        threshold (200_000), otherwise AutoCompact would never have fired
+        anyway and the test would pass even with broken ordering. The
+        previous version of this test used 150_000 — below threshold — so
+        it was vacuously correct.
         """
         from vibe.core.middleware import AutoCompactMiddleware
 
         cfg = build_test_vibe_config()
-        # threshold=200_000; micro fires at 140_000; after clearing, tokens drop below 200_000
-        big_content = "C" * 600_000  # ~150_000 tokens
-        # Three bash results so the oldest is clearable under default keep_last=2
-        messages = MessageList([
-            LLMMessage(
-                role=Role.tool, name="bash", tool_call_id="c1", content=big_content
-            ),
-            LLMMessage(
-                role=Role.tool, name="bash", tool_call_id="c2", content="recent1"
-            ),
-            LLMMessage(
-                role=Role.tool, name="bash", tool_call_id="c3", content="recent2"
-            ),
-        ])
-        stats = AgentStats()
-        stats.context_tokens = 150_000
-        ctx = ConversationContext(messages=messages, stats=stats, config=cfg)
+        big_content = (
+            "C" * 600_000
+        )  # ~150_000 tokens — enough headroom to drop below 200_000
 
+        def _build_ctx() -> ConversationContext:
+            messages = MessageList([
+                LLMMessage(
+                    role=Role.tool, name="bash", tool_call_id="c1", content=big_content
+                ),
+                LLMMessage(
+                    role=Role.tool, name="bash", tool_call_id="c2", content="recent1"
+                ),
+                LLMMessage(
+                    role=Role.tool, name="bash", tool_call_id="c3", content="recent2"
+                ),
+            ])
+            stats = AgentStats()
+            stats.context_tokens = 210_000  # ABOVE auto-compact threshold (200_000)
+            return ConversationContext(messages=messages, stats=stats, config=cfg)
+
+        # Negative control: AutoCompact alone at 210k DOES fire. This proves
+        # the threshold setup is real — without it, the assertion below
+        # could not distinguish "micro saved us" from "Auto never fires here".
+        ctx_auto_only = _build_ctx()
+        auto_only = MiddlewarePipeline()
+        auto_only.add(AutoCompactMiddleware())
+        auto_result = await auto_only.run_before_turn(ctx_auto_only)
+        assert auto_result.action == MiddlewareAction.COMPACT, (
+            "Negative control failed — AutoCompact didn't fire at 210k tokens, "
+            "so the positive assertion below would be vacuous."
+        )
+
+        # Positive: with MicroCompact registered first, it reclaims tokens
+        # and AutoCompact (running after) stays CONTINUE.
+        ctx = _build_ctx()
         pipeline = MiddlewarePipeline()
         pipeline.add(MicroCompactMiddleware())
         pipeline.add(AutoCompactMiddleware())
-
         result = await pipeline.run_before_turn(ctx)
 
-        # AutoCompact should NOT fire because micro brought tokens down
         assert result.action == MiddlewareAction.CONTINUE
+        assert (
+            ctx.stats.context_tokens < 200_000
+        )  # micro brought us below the threshold
+        assert ctx.stats.cleared_tool_results >= 1

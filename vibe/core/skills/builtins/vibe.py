@@ -115,9 +115,7 @@ temperature = 0.2
 input_price = 0.4
 output_price = 2.0
 thinking = "off"                  # "off", "low", "medium", "high"
-auto_compact_threshold = 200000
-micro_compact_ratio = 0.7
-micro_keep_last = 2
+auto_compact_threshold = 200000   # Per-model override of the top-level value
 
 [[models]]
 name = "devstral-small-latest"
