@@ -90,16 +90,20 @@ CHAT_AGENT_TOOLS = ["grep", "read_file", "ask_user_question", "task"]
 def _plan_overrides() -> dict[str, Any]:
     plans_pattern = str(PLANS_DIR.path / "*")
     return {
-        # Plans dir stays writable so the planning agent can edit plan files.
+        # NOTE: this allowlist is moot WHILE plan mode is active. WriteFile
+        # and SearchReplace carry mutates_state=True, so the dispatch-layer
+        # gate in _execute_tool_call short-circuits them before permission
+        # resolution ever runs. We keep "ask" + plans-dir allowlist purely
+        # as a defense-in-depth artifact for any future code path that
+        # might bypass _execute_tool_call (e.g., direct tool invocation
+        # outside the agent loop).
         #
-        # Why "ask" instead of "never": plan-mode safety is now enforced at the
-        # dispatch layer via BaseTool.mutates_state — _execute_tool_call short-
-        # circuits write tools before permission resolution runs. Keeping a
-        # second "never" rule here would just produce two parallel error
-        # paths with different messages. So the dispatch gate is the SINGLE
-        # choke point; if you add a future code path that calls
-        # _should_execute_tool without going through _execute_tool_call,
-        # you must re-introduce a permission-layer block too.
+        # Why "ask" instead of "never": the dispatch gate is the SINGLE
+        # canonical block; a second "never" rule here would just create
+        # two parallel error paths with different messages. If you add a
+        # path that calls _should_execute_tool without going through
+        # _execute_tool_call, you must re-introduce a permission-layer
+        # block to preserve plan-mode safety.
         "tools": {
             "write_file": {"permission": "ask", "allowlist": [plans_pattern]},
             "search_replace": {"permission": "ask", "allowlist": [plans_pattern]},

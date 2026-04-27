@@ -54,6 +54,7 @@ class TestBuiltinMutatesStateMatrix:
 
     def test_read_only_builtins(self) -> None:
         from vibe.core.tools.builtins.ask_user_question import AskUserQuestion
+        from vibe.core.tools.builtins.enter_plan_mode import EnterPlanMode
         from vibe.core.tools.builtins.exit_plan_mode import ExitPlanMode
         from vibe.core.tools.builtins.grep import Grep
         from vibe.core.tools.builtins.read_file import ReadFile
@@ -68,6 +69,7 @@ class TestBuiltinMutatesStateMatrix:
         assert AskUserQuestion.mutates_state is False
         assert Todo.mutates_state is False
         assert ExitPlanMode.mutates_state is False
+        assert EnterPlanMode.mutates_state is False
 
     def test_write_or_exec_builtins(self) -> None:
         from vibe.core.tools.builtins.bash import Bash
