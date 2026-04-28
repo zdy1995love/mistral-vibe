@@ -10,17 +10,23 @@ import httpx
 
 from vibe.core.llm.backend.anthropic import AnthropicAdapter
 from vibe.core.llm.backend.base import APIAdapter, PreparedRequest
+from vibe.core.llm.backend.mistral_text_tool_call_extractor import (
+    CompletedToolCall,
+    MistralToolCallTextExtractor,
+)
 from vibe.core.llm.backend.reasoning_adapter import ReasoningAdapter
 from vibe.core.llm.backend.think_tag_extractor import ThinkTagExtractor
 from vibe.core.llm.exceptions import BackendErrorBuilder
 from vibe.core.llm.message_utils import merge_consecutive_user_messages
 from vibe.core.types import (
     AvailableTool,
+    FunctionCall,
     LLMChunk,
     LLMMessage,
     LLMUsage,
     Role,
     StrToolChoice,
+    ToolCall,
 )
 from vibe.core.utils import async_generator_retry, async_retry
 
@@ -230,6 +236,41 @@ def _apply_think_extractor_streaming(
     return LLMChunk(message=new_msg, usage=chunk.usage)
 
 
+def _completed_to_tool_calls(items: list[CompletedToolCall]) -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=it.id,
+            index=it.index,
+            function=FunctionCall(name=it.name, arguments=it.arguments),
+            type="function",
+        )
+        for it in items
+    ]
+
+
+def _apply_tool_call_text_extractor_streaming(
+    chunk: LLMChunk, extractor: MistralToolCallTextExtractor
+) -> LLMChunk:
+    """Recover tool calls leaked as plain text by buggy server parsers.
+
+    No-op when the chunk already carries structured tool_calls (server is
+    healthy) or when content is empty.
+    """
+    msg = chunk.message
+    if msg.tool_calls:
+        return chunk
+    if not msg.content:
+        return chunk
+    new_content, completed = extractor.feed(msg.content)
+    if new_content == msg.content and not completed:
+        return chunk
+    update: dict[str, Any] = {"content": new_content or None}
+    if completed:
+        update["tool_calls"] = _completed_to_tool_calls(completed)
+    new_msg = msg.model_copy(update=update)
+    return LLMChunk(message=new_msg, usage=chunk.usage)
+
+
 _ADAPTERS: dict[str, APIAdapter] = {
     "openai": OpenAIAdapter(),
     "anthropic": AnthropicAdapter(),
@@ -413,11 +454,20 @@ class GenericBackend:
         extractor: ThinkTagExtractor | None = (
             ThinkTagExtractor() if self._provider.send_thinking_blocks else None
         )
+        tc_extractor: MistralToolCallTextExtractor | None = (
+            MistralToolCallTextExtractor()
+            if getattr(self._provider, "parse_text_tool_calls", False)
+            else None
+        )
         try:
             async for res_data in self._make_streaming_request(url, req.body, headers):
                 chunk = adapter.parse_response(res_data, self._provider)
                 if extractor is not None:
                     chunk = _apply_think_extractor_streaming(chunk, extractor)
+                if tc_extractor is not None:
+                    chunk = _apply_tool_call_text_extractor_streaming(
+                        chunk, tc_extractor
+                    )
                 yield chunk
             if extractor is not None:
                 tail_r, tail_c = extractor.flush()
@@ -427,6 +477,19 @@ class GenericBackend:
                             role=Role.assistant,
                             content=tail_c or None,
                             reasoning_content=tail_r or None,
+                        ),
+                        usage=LLMUsage(prompt_tokens=0, completion_tokens=0),
+                    )
+            if tc_extractor is not None:
+                tail_c2, tail_calls = tc_extractor.flush()
+                if tail_c2 or tail_calls:
+                    yield LLMChunk(
+                        message=LLMMessage(
+                            role=Role.assistant,
+                            content=tail_c2 or None,
+                            tool_calls=_completed_to_tool_calls(tail_calls)
+                            if tail_calls
+                            else None,
                         ),
                         usage=LLMUsage(prompt_tokens=0, completion_tokens=0),
                     )

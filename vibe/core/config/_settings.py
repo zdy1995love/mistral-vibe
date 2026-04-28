@@ -161,6 +161,7 @@ class ProviderConfig(BaseModel):
     backend: Backend = Backend.GENERIC
     reasoning_field_name: str = "reasoning_content"
     send_thinking_blocks: bool = False
+    parse_text_tool_calls: bool = False
     project_id: str = ""
     region: str = ""
 
