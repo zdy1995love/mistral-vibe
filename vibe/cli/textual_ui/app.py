@@ -1779,6 +1779,17 @@ class VibeApp(App):  # noqa: PLR0904
             )
 
     async def _toggle_plan_mode(self, cmd_args: str = "", **kwargs: Any) -> None:
+        if cmd_args.strip():
+            # /plan does not accept arguments; semantics for /plan on/off
+            # would be ambiguous (vs. the toggle behavior), so reject loudly
+            # rather than silently ignore.
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "/plan does not accept arguments. Use /plan to toggle.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
         if self._agent_running:
             await self._mount_and_scroll(
                 ErrorMessage(
@@ -1791,11 +1802,46 @@ class VibeApp(App):  # noqa: PLR0904
         currently_in_plan = (
             self.agent_loop.agent_manager.active_profile.name == BuiltinAgentName.PLAN
         )
-        target = (
-            BuiltinAgentName.DEFAULT if currently_in_plan else BuiltinAgentName.PLAN
-        )
-        self.agent_loop.agent_manager.switch_profile(target)
-        self._on_profile_changed()
+        if currently_in_plan:
+            target = (
+                self.agent_loop.agent_manager.pre_plan_profile
+                or BuiltinAgentName.DEFAULT
+            )
+        else:
+            target = BuiltinAgentName.PLAN
+
+        # Drive UI through the same worker + post-completion callback that
+        # _cycle_agent uses, so all entry paths converge on the canonical
+        # full-reload via agent_loop.switch_agent.
+        new_profile = self.agent_loop.agent_manager.get_agent(target)
+        self._update_profile_widgets(new_profile)
+        if self._chat_input_container:
+            self._chat_input_container.switching_mode = True
+
+        def schedule_switch() -> None:
+            self._switch_agent_generation += 1
+            my_gen = self._switch_agent_generation
+
+            def switch_agent_sync() -> None:
+                try:
+                    asyncio.run(self.agent_loop.switch_agent(target))
+                    self.agent_loop.set_approval_callback(self._approval_callback)
+                    self.agent_loop.set_user_input_callback(self._user_input_callback)
+                finally:
+                    if (
+                        self._chat_input_container
+                        and self._switch_agent_generation == my_gen
+                    ):
+                        self.call_from_thread(self._on_profile_changed)
+                        self.call_from_thread(
+                            setattr, self._chat_input_container, "switching_mode", False
+                        )
+
+            self.run_worker(
+                switch_agent_sync, group="switch_agent", exclusive=True, thread=True
+            )
+
+        self.call_after_refresh(schedule_switch)
 
     async def _compact_history(self, cmd_args: str = "", **kwargs: Any) -> None:
         if self._agent_running:
@@ -2483,7 +2529,9 @@ class VibeApp(App):  # noqa: PLR0904
                         self._chat_input_container
                         and self._switch_agent_generation == my_gen
                     ):
-                        self.call_from_thread(self._refresh_banner)
+                        # _on_profile_changed refreshes profile widgets + banner
+                        # AND updates the [PLAN] indicator chip — single point.
+                        self.call_from_thread(self._on_profile_changed)
                         self.call_from_thread(
                             setattr, self._chat_input_container, "switching_mode", False
                         )

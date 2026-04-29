@@ -53,6 +53,11 @@ class AgentManager:
             )
         self.active_profile = profile or self._available[BuiltinAgentName.DEFAULT]
         self._cached_config: VibeConfig | None = None
+        # Profile name that was active at the moment we entered PLAN mode, so
+        # cancel/exit can restore it instead of always defaulting to DEFAULT.
+        # Set by switch_profile when transitioning into PLAN; cleared on any
+        # transition away from PLAN.
+        self._pre_plan_profile: str | None = None
 
     @property
     def _config(self) -> VibeConfig:
@@ -86,7 +91,20 @@ class AgentManager:
             self._cached_config = self.active_profile.apply_to_config(self._config)
         return self._cached_config
 
+    @property
+    def pre_plan_profile(self) -> str | None:
+        return self._pre_plan_profile
+
     def switch_profile(self, name: str) -> None:
+        current = self.active_profile.name
+        if name == BuiltinAgentName.PLAN and current != BuiltinAgentName.PLAN:
+            # Stash the entry-point profile so /plan cancel and ExitPlanMode
+            # can restore it.
+            self._pre_plan_profile = current
+        elif name != BuiltinAgentName.PLAN:
+            # Any non-PLAN destination clears the stash, including transitions
+            # between non-plan profiles via the cycle key.
+            self._pre_plan_profile = None
         self.active_profile = self.get_agent(name)
         self._cached_config = None
 
