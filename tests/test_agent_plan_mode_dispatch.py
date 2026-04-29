@@ -244,3 +244,90 @@ class TestForkToDev:
         await loop.fork_to_dev()
         # After (or even mid-) fork, pending must be cleared.
         assert loop.pending_fork_to_dev is None
+
+
+class TestFullForkFlowEndToEnd:
+    """End-to-end: plan mode LLM calls ExitPlanMode → user approves → loop
+    signals pending fork → fork_to_dev clears + switches + returns seed →
+    re-act with seed in pre-plan profile.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exit_plan_mode_to_fork_to_dev_then_implement(self) -> None:
+        from vibe.core.tools.builtins.ask_user_question import (
+            Answer,
+            AskUserQuestionResult,
+        )
+        from vibe.core.types import AssistantEvent
+
+        config = build_test_vibe_config()
+        backend = FakeBackend([
+            # Turn 1 (PLAN): LLM calls ExitPlanMode
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="exit_plan_mode", arguments="{}"
+                            ),
+                        )
+                    ]
+                )
+            ],
+            # Turn 2 (DEFAULT, post-fork): LLM responds to seed
+            [mock_llm_chunk(content="Implementing now.")],
+        ])
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
+        )
+        # Mark DEFAULT as pre_plan so fork lands there.
+        loop.agent_manager._pre_plan_profile = BuiltinAgentName.DEFAULT
+
+        # Pre-write the plan file at the path the loop will check.
+        plan_file = loop._plan_session.plan_file_path
+        plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan_text = "# Plan\n- step 1\n"
+        plan_file.write_text(plan_text)
+
+        async def approve(_args: object) -> AskUserQuestionResult:
+            return AskUserQuestionResult(
+                answers=[
+                    Answer(
+                        question="q",
+                        answer="Yes, and request approval for edits",
+                        is_other=False,
+                    )
+                ],
+                cancelled=False,
+            )
+
+        loop.set_user_input_callback(approve)
+
+        # Drive PLAN turn — ExitPlanMode runs, fork is staged, loop breaks.
+        original_session_id = loop.session_id
+        events_1 = [e async for e in loop.act("exit when ready")]
+        assert loop.pending_fork_to_dev is not None
+        # ExitPlanMode tool result is in events_1, but no DEFAULT-profile
+        # response yet (loop broke out before the second LLM turn).
+        assert isinstance(events_1, list)
+
+        # Drive fork — would be done by host app after act() returns.
+        seed = await loop.fork_to_dev()
+        assert plan_text.strip() in seed
+        assert str(plan_file) in seed
+        assert loop.agent_profile.name == BuiltinAgentName.DEFAULT
+        assert loop.session_id != original_session_id  # new session
+        assert len(loop.messages) == 1  # only system prompt
+
+        # Drive DEFAULT turn with seed — LLM implements.
+        events_2 = [e async for e in loop.act(seed)]
+        assistant_replies = [
+            e for e in events_2 if isinstance(e, AssistantEvent)
+        ]
+        assert any(
+            "Implementing now" in (e.content or "") for e in assistant_replies
+        )
+        # Plan file persists on disk through the fork.
+        assert plan_file.is_file()
