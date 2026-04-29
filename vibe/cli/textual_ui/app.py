@@ -7,8 +7,10 @@ from enum import StrEnum, auto
 import gc
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
+import tempfile
 import time
 import tomllib
 from typing import Any, ClassVar, assert_never, cast
@@ -737,24 +739,95 @@ class VibeApp(App):  # noqa: PLR0904
     async def on_agents_picker_app_edit_requested(
         self, event: AgentsPickerApp.EditRequested
     ) -> None:
-        # Implementation lands in Task 6 (edit flow).
-        await self._switch_to_input_app()
-        await self._mount_and_scroll(
-            UserCommandMessage(
-                f"Edit for `{event.name}` not yet implemented."
+        from vibe.cli.textual_ui.agent_editor import AgentEditorError, resolve_edit_path
+
+        manager = self.agent_loop.agent_manager
+        try:
+            path = resolve_edit_path(event.name, manager)
+        except AgentEditorError as e:
+            await self._switch_to_input_app()
+            await self._mount_and_scroll(
+                ErrorMessage(f"Cannot edit `{event.name}`: {e}")
             )
+            return
+
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+
+        await self._switch_to_input_app()
+
+        if WINDOWS or self._driver is None or not self._driver.can_suspend:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Suspend not supported in this terminal. Edit "
+                    f"`{path}` manually, then run /reload."
+                )
+            )
+            return
+
+        try:
+            with self.suspend():
+                subprocess.run([*shlex.split(editor), str(path)], check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            await self._mount_and_scroll(ErrorMessage(f"Editor exited with error: {e}"))
+            return
+
+        try:
+            manager.reload_from_disk()
+            self.agent_loop.refresh_config()
+            await self.agent_loop.refresh_system_prompt()
+        except Exception as e:
+            await self._mount_and_scroll(
+                ErrorMessage(f"Failed to reload after edit: {e}")
+            )
+            return
+
+        await self._mount_and_scroll(
+            UserCommandMessage(f"Agent `{event.name}` reloaded from `{path}`.")
         )
 
     async def on_agents_picker_app_view_full_requested(
         self, event: AgentsPickerApp.ViewFullRequested
     ) -> None:
-        # Implementation lands in Task 6 (view-full flow via $PAGER).
-        await self._switch_to_input_app()
-        await self._mount_and_scroll(
-            UserCommandMessage(
-                f"View-full for `{event.name}` not yet implemented."
+        manager = self.agent_loop.agent_manager
+        try:
+            profile = manager.get_agent(event.name)
+            merged = profile.apply_to_config(self.agent_loop.base_config)
+            content = merged.system_prompt
+        except Exception as e:
+            await self._switch_to_input_app()
+            await self._mount_and_scroll(
+                ErrorMessage(f"Cannot resolve system prompt for `{event.name}`: {e}")
             )
+            return
+
+        await self._switch_to_input_app()
+
+        if WINDOWS or self._driver is None or not self._driver.can_suspend:
+            await self._mount_and_scroll(
+                UserCommandMessage(
+                    f"### System prompt for `{event.name}`\n\n```\n{content}\n```"
+                )
+            )
+            return
+
+        pager = os.environ.get("PAGER") or "less"
+
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".md", prefix=f"vibe_agent_{event.name}_"
         )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            try:
+                with self.suspend():
+                    subprocess.run([*shlex.split(pager), tmp_path], check=False)
+            except OSError as e:
+                await self._mount_and_scroll(
+                    ErrorMessage(f"Could not launch pager: {e}")
+                )
+                return
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     async def on_mcpapp_mcpclosed(self, _message: MCPApp.MCPClosed) -> None:
         await self._mount_and_scroll(UserCommandMessage("MCP servers closed."))
@@ -1140,7 +1213,9 @@ class VibeApp(App):  # noqa: PLR0904
             current_prompt = prompt
             while True:
                 await self._ensure_loading_widget()
-                rendered_prompt = render_path_prompt(current_prompt, base_dir=Path.cwd())
+                rendered_prompt = render_path_prompt(
+                    current_prompt, base_dir=Path.cwd()
+                )
                 self._narrator_manager.cancel()
                 self._narrator_manager.on_turn_start(rendered_prompt)
                 async with aclosing(self.agent_loop.act(rendered_prompt)) as events:
@@ -1928,7 +2003,10 @@ class VibeApp(App):  # noqa: PLR0904
             # Defensive: a custom pre-plan profile may have been removed
             # while the user was in plan mode (e.g., agent toml deleted).
             # Fall back to DEFAULT rather than letting get_agent raise.
-            if stashed and stashed not in self.agent_loop.agent_manager.available_agents:
+            if (
+                stashed
+                and stashed not in self.agent_loop.agent_manager.available_agents
+            ):
                 target = BuiltinAgentName.DEFAULT
         else:
             target = BuiltinAgentName.PLAN
