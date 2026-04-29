@@ -64,20 +64,28 @@ class TestOutputStyleInjection:
     def test_default_style_is_byte_equivalent_to_no_prepend(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """REGRESSION GUARD: output_style='default' must produce a system
-        prompt byte-identical to a baseline that bypasses style injection
-        entirely. Built by stubbing StyleManager.load to return "" and
-        comparing against the real default.md path.
+        """REGRESSION GUARD: building a prompt with output_style='default'
+        must be byte-identical to a build where _resolve_output_style_section
+        is forced to skip prepending entirely.
 
-        If anyone ever lets visible content slip into default.md (a stray
-        line, removed comment markers, etc), this assertion fails — that is
-        the property the previous smoke test could not catch.
+        The earlier version of this test stubbed StyleManager.load to return
+        "" and compared against the real default.md run. Both paths hit the
+        resolver's `visible == ""` → `return ()` branch, so the comparison
+        was trivially `prompt == prompt`. A regression that made the
+        resolver unconditionally prepend would NOT have been caught.
+
+        This version patches _resolve_output_style_section itself to always
+        return (), giving us a true "no-prepend" baseline. If anyone ever
+        lets visible content into default.md or changes the resolver to
+        always prepend for "default", the assertion fails.
         """
         prompt_default = _build_prompt("default")
 
-        from vibe.core.output_styles import StyleManager
+        from vibe.core import system_prompt
 
-        monkeypatch.setattr(StyleManager, "load", lambda self, name: "")
+        monkeypatch.setattr(
+            system_prompt, "_resolve_output_style_section", lambda config: ()
+        )
         prompt_baseline = _build_prompt("default")
 
         assert prompt_default == prompt_baseline

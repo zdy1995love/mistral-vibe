@@ -167,3 +167,61 @@ class TestStyleHandlerSwitch:
         rendered = "\n".join(_widget_content(w) for w in captured)
         assert "does-not-exist" in rendered or "Unknown" in rendered
         assert loop.config.output_style == "default"
+
+
+class TestStyleSwitchInPlanMode:
+    """/style switching while in PLAN profile must not disturb plan-mode state.
+
+    The handler now goes through agent_loop.refresh_system_prompt(), which is
+    profile-aware. This test pins that switching style while the profile is
+    PLAN: (a) actually rewrites messages[0] with the new preamble, and
+    (b) does NOT side-effect the profile (a future refactor that accidentally
+    swaps profile during refresh would be caught here).
+    """
+
+    @pytest.mark.asyncio
+    async def test_concise_switch_keeps_plan_profile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vibe.core.agents.models import BuiltinAgentName
+        from vibe.core.config import VibeConfig
+
+        monkeypatch.setattr(
+            VibeConfig, "save_updates", classmethod(lambda cls, u: None)
+        )
+
+        config = build_test_vibe_config(output_style="default")
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN
+        )
+        app = build_test_vibe_app(agent_loop=loop)
+        captured: list[Any] = []
+
+        async def _capture(widget: Any) -> None:
+            captured.append(widget)
+
+        app._mount_and_scroll = _capture  # type: ignore[method-assign]
+
+        # Mirror the production refresh_config behavior the way the existing
+        # TestStyleHandlerSwitch suite does: simulate the config reload that
+        # would normally pick up the just-written file.
+        def _fake_refresh() -> None:
+            new_cfg = loop._base_config.model_copy(update={"output_style": "concise"})
+            loop._base_config = new_cfg
+            loop.agent_manager.invalidate_config()
+
+        loop.refresh_config = _fake_refresh  # type: ignore[method-assign]
+
+        # Sanity: started in PLAN.
+        assert loop.agent_profile.name == BuiltinAgentName.PLAN
+
+        await app._set_output_style(cmd_args="concise")
+
+        # Style took effect: concise preamble landed in messages[0].
+        assert "Output Style: Concise" in (loop.messages[0].content or "")
+        # Profile must still be PLAN — the prompt rebuild is profile-aware,
+        # but it is NOT a profile switch.
+        assert loop.agent_profile.name == BuiltinAgentName.PLAN
+        # Confirm message at index 0 is the (refreshed) system prompt.
+        from vibe.core.types import Role
+        assert loop.messages[0].role == Role.system
