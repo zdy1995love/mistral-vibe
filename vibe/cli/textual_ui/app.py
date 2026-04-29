@@ -1108,25 +1108,33 @@ class VibeApp(App):  # noqa: PLR0904
                 await self._remove_loading_widget()
                 self._refresh_banner()
 
-            await self._ensure_loading_widget()
-            rendered_prompt = render_path_prompt(prompt, base_dir=Path.cwd())
-            self._narrator_manager.cancel()
-            self._narrator_manager.on_turn_start(rendered_prompt)
-            async with aclosing(self.agent_loop.act(rendered_prompt)) as events:
-                async for event in events:
-                    self._narrator_manager.on_turn_event(event)
-                    if isinstance(event, WaitingForInputEvent):
-                        await self._remove_loading_widget()
-                        if self._remote_manager.is_active:
-                            await self._handle_remote_waiting_input(event)
-                    elif self._loading_widget is None and is_progress_event(event):
-                        await self._ensure_loading_widget()
-                    if self.event_handler:
-                        await self.event_handler.handle_event(
-                            event,
-                            loading_active=self._loading_widget is not None,
-                            loading_widget=self._loading_widget,
-                        )
+            current_prompt = prompt
+            while True:
+                await self._ensure_loading_widget()
+                rendered_prompt = render_path_prompt(current_prompt, base_dir=Path.cwd())
+                self._narrator_manager.cancel()
+                self._narrator_manager.on_turn_start(rendered_prompt)
+                async with aclosing(self.agent_loop.act(rendered_prompt)) as events:
+                    async for event in events:
+                        self._narrator_manager.on_turn_event(event)
+                        if isinstance(event, WaitingForInputEvent):
+                            await self._remove_loading_widget()
+                            if self._remote_manager.is_active:
+                                await self._handle_remote_waiting_input(event)
+                        elif self._loading_widget is None and is_progress_event(event):
+                            await self._ensure_loading_widget()
+                        if self.event_handler:
+                            await self.event_handler.handle_event(
+                                event,
+                                loading_active=self._loading_widget is not None,
+                                loading_widget=self._loading_widget,
+                            )
+
+                # ExitPlanMode requested fork-to-dev. Wipe UI, switch profile,
+                # and start a fresh act() with the plan as seed.
+                if self.agent_loop.pending_fork_to_dev is None:
+                    break
+                current_prompt = await self._handle_pending_fork()
 
         except asyncio.CancelledError:
             await self._handle_turn_error()
@@ -1160,6 +1168,39 @@ class VibeApp(App):  # noqa: PLR0904
                 await self.event_handler.finalize_streaming()
             await self._refresh_windowing_from_history()
             self._terminal_notifier.notify(NotificationContext.COMPLETE)
+
+    async def _handle_pending_fork(self) -> str:
+        """Consume agent_loop.pending_fork_to_dev: clear context, switch
+        profile, refresh UI, return the seed message for the next act() call.
+        """
+        if self._loading_widget:
+            await self._loading_widget.remove()
+            self._loading_widget = None
+        if self.event_handler:
+            await self.event_handler.finalize_streaming()
+
+        # fork_to_dev() runs clear_history + switch_agent and returns the seed.
+        # The agent_loop.messages list is reset to [system_prompt] post-call.
+        seed = await self.agent_loop.fork_to_dev()
+
+        self._reset_ui_state()
+        if self._chat_input_container:
+            self._chat_input_container.set_custom_border(None)
+
+        messages_area = self._cached_messages_area or self.query_one("#messages")
+        await messages_area.remove_children()
+        await messages_area.mount(
+            UserCommandMessage(
+                "Plan approved — wiped planning context. Implementing in a "
+                "fresh conversation."
+            )
+        )
+        chat = self._cached_chat or self.query_one("#chat", ChatScroll)
+        chat.scroll_home(animate=False)
+
+        # Reflect the new profile (chip + banner + profile widgets).
+        self._on_profile_changed()
+        return seed
 
     def _rate_limit_message(self) -> str:
         upgrade_to_pro = self._plan_info and (

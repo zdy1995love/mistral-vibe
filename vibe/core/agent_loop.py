@@ -250,6 +250,11 @@ class AgentLoop:
         self.user_input_callback: UserInputCallback | None = None
         self.entrypoint_metadata = entrypoint_metadata
         self.session_id = str(uuid4())
+        # Pending fork-to-dev request set by ExitPlanMode tool. Tuple of
+        # (plan_text, plan_path, target_profile). Consumed by the host app
+        # after the current act() returns: it calls fork_to_dev() to wipe
+        # context and switch profile, then re-enters act() with the seed.
+        self._pending_fork_to_dev: tuple[str, Path, str] | None = None
 
         try:
             active_model = config.get_active_model()
@@ -696,6 +701,13 @@ class AgentLoop:
                 if user_cancelled:
                     return
 
+                # If a tool requested fork-to-dev (ExitPlanMode), break out
+                # immediately so the host app can wipe context and re-enter
+                # act() in the dev profile. Letting another LLM turn run
+                # would generate a response that is about to be discarded.
+                if self._pending_fork_to_dev is not None:
+                    should_break_loop = True
+
         finally:
             await self._save_messages()
 
@@ -879,6 +891,7 @@ class AgentLoop:
                     sampling_callback=self._sampling_handler,
                     plan_file_path=self._plan_session.plan_file_path,
                     switch_agent_callback=self.switch_agent,
+                    request_fork_to_dev_callback=self.request_fork_to_dev,
                     skill_manager=self.skill_manager,
                 ),
                 **tool_call.args_dict,
@@ -1316,6 +1329,46 @@ class AgentLoop:
     def _reset_session(self) -> None:
         self.session_id = str(uuid4())
         self.session_logger.reset_session(self.session_id)
+
+    @property
+    def pending_fork_to_dev(self) -> tuple[str, Path, str] | None:
+        return self._pending_fork_to_dev
+
+    def request_fork_to_dev(
+        self, plan_text: str, plan_path: Path, target_profile: str
+    ) -> None:
+        """Stage a fork-to-dev. Called by ExitPlanMode after user approval.
+
+        Does not mutate state immediately — the host app calls fork_to_dev()
+        after the current act() completes, so the conversation loop has a
+        chance to drain cleanly first.
+        """
+        self._pending_fork_to_dev = (plan_text, plan_path, target_profile)
+
+    @requires_init
+    async def fork_to_dev(self) -> str:
+        """Execute the staged fork-to-dev: wipe history, switch profile,
+        return the seed user message that the caller should pass to act().
+
+        Order: clear_history → switch_agent → return seed.
+        - clear_history wipes messages (keeps system prompt at messages[0]),
+          regenerates session_id, resets middleware/tools.
+        - switch_agent rebuilds tool_manager/skill_manager/system prompt for
+          the destination profile.
+        - The seed is NOT injected — the caller passes it to act() so the
+          new conversation starts with the LLM driving on the seed.
+        """
+        if self._pending_fork_to_dev is None:
+            raise AgentLoopError("No pending fork-to-dev to execute.")
+        plan_text, plan_path, target_profile = self._pending_fork_to_dev
+        self._pending_fork_to_dev = None
+
+        await self.clear_history()
+        await self.switch_agent(target_profile)
+        return (
+            f"Implement the following plan:\n\n{plan_text.strip()}\n\n"
+            f"Plan file: {plan_path} (re-read at any time)."
+        )
 
     @requires_init
     async def clear_history(self) -> None:

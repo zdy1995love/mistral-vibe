@@ -42,10 +42,12 @@ class ExitPlanMode(
     ToolUIData[ExitPlanModeArgs, ExitPlanModeResult],
 ):
     description: ClassVar[str] = (
-        "Signal that your plan is complete and you are ready to start implementing. "
-        "This will ask the user to confirm switching from plan mode to accept-edits mode. "
-        "Only use this tool when you have finished writing your plan to the plan file "
-        "and are ready for user approval to begin implementation."
+        "Signal that your plan is complete and you are ready to start "
+        "implementing. The user is asked to confirm; on approval the "
+        "conversation context is wiped and a fresh implementation context "
+        "is started with the plan as the first user message. Only call "
+        "this after writing the full plan to the plan file path supplied "
+        "in the plan-mode system reminder."
     )
     mutates_state: ClassVar[bool] = False
 
@@ -73,32 +75,49 @@ class ExitPlanMode(
         if ctx.user_input_callback is None:
             raise ToolError("ExitPlanMode requires an interactive UI.")
 
-        plan_content: str | None = None
-        if ctx.plan_file_path and ctx.plan_file_path.is_file():
-            try:
-                plan_content = read_safe(ctx.plan_file_path).text
-            except OSError as e:
-                raise ToolError(
-                    f"Failed to read plan file at {ctx.plan_file_path}: {e}"
-                ) from e
+        if ctx.plan_file_path is None or not ctx.plan_file_path.is_file():
+            raise ToolError(
+                "No plan file found. Write your plan to the plan-mode plan "
+                "file (path is in the plan-mode system reminder) before "
+                "calling ExitPlanMode."
+            )
+        try:
+            plan_content = read_safe(ctx.plan_file_path).text
+        except OSError as e:
+            raise ToolError(
+                f"Failed to read plan file at {ctx.plan_file_path}: {e}"
+            ) from e
+        if not plan_content.strip():
+            raise ToolError(
+                "Plan file is empty. Write the plan before calling ExitPlanMode."
+            )
 
         confirmation = AskUserQuestionArgs(
             questions=[
                 Question(
-                    question="Plan is complete. Switch to accept-edits mode and start implementing?",
+                    question=(
+                        "Plan is complete. Approve and start a fresh "
+                        "implementation context with this plan as the seed?"
+                    ),
                     header="Plan ready",
                     options=[
                         Choice(
                             label="Yes, and auto approve edits",
-                            description="Switch to accept-edits mode with auto-approve permissions",
+                            description=(
+                                "Wipe planning context, start fresh with "
+                                "auto-approve edits enabled."
+                            ),
                         ),
                         Choice(
                             label="Yes, and request approval for edits",
-                            description="Switch to default agent mode (manual approval for edits)",
+                            description=(
+                                "Wipe planning context, start fresh in the "
+                                "profile you were in before plan mode."
+                            ),
                         ),
                         Choice(
                             label="No",
-                            description="Stay in plan mode and continue planning",
+                            description="Stay in plan mode and continue planning.",
                         ),
                     ],
                 )
@@ -117,31 +136,36 @@ class ExitPlanMode(
 
         answer = result.answers[0]
         answer_lower = answer.answer.lower()
+
         if answer_lower == "yes, and auto approve edits":
-            if ctx.switch_agent_callback:
-                await ctx.switch_agent_callback(BuiltinAgentName.ACCEPT_EDITS)
-            else:
-                ctx.agent_manager.switch_profile(BuiltinAgentName.ACCEPT_EDITS)
-            yield ExitPlanModeResult(
-                switched=True,
-                message="Switched to accept-edits mode. You can now start implementing the plan.",
-            )
+            target_profile = BuiltinAgentName.ACCEPT_EDITS
         elif answer_lower == "yes, and request approval for edits":
-            if ctx.switch_agent_callback:
-                await ctx.switch_agent_callback(BuiltinAgentName.DEFAULT)
-            else:
-                ctx.agent_manager.switch_profile(BuiltinAgentName.DEFAULT)
-            yield ExitPlanModeResult(
-                switched=True,
-                message="Switched to default agent mode. Edits will require your approval.",
+            target_profile = (
+                ctx.agent_manager.pre_plan_profile or BuiltinAgentName.DEFAULT
             )
         elif answer.is_other:
             yield ExitPlanModeResult(
                 switched=False,
                 message=f"Staying in plan mode. User feedback: {answer.answer}",
             )
+            return
         else:
             yield ExitPlanModeResult(
                 switched=False,
                 message="Staying in plan mode. Continue refining the plan.",
             )
+            return
+
+        if ctx.request_fork_to_dev_callback is None:
+            raise ToolError(
+                "Fork-to-dev not available in this context — cannot exit plan mode."
+            )
+        ctx.request_fork_to_dev_callback(
+            plan_content, ctx.plan_file_path, target_profile
+        )
+        yield ExitPlanModeResult(
+            switched=True,
+            message=(
+                f"Plan approved. Forking to {target_profile} with plan as seed."
+            ),
+        )

@@ -56,6 +56,12 @@ class InvokeContext:
     entrypoint_metadata: EntrypointMetadata | None = field(default=None)
     plan_file_path: Path | None = field(default=None)
     switch_agent_callback: SwitchAgentCallback | None = field(default=None)
+    # Stage a fork-to-dev: the host app reads it after the current act()
+    # returns, wipes context, and re-enters act() with the seed message.
+    # Signature: (plan_text, plan_path, target_profile) -> None.
+    request_fork_to_dev_callback: (
+        Callable[[str, Path, str], None] | None
+    ) = field(default=None)
     skill_manager: SkillManager | None = field(default=None)
 
 
