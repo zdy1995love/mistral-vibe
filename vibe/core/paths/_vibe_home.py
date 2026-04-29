@@ -32,6 +32,10 @@ TRUSTED_FOLDERS_FILE = GlobalPath(lambda: VIBE_HOME.path / "trusted_folders.toml
 LOG_DIR = GlobalPath(lambda: VIBE_HOME.path / "logs")
 LOG_FILE = GlobalPath(lambda: VIBE_HOME.path / "logs" / "vibe.log")
 HISTORY_FILE = GlobalPath(lambda: VIBE_HOME.path / "vibehistory")
-PLANS_DIR = GlobalPath(lambda: VIBE_HOME.path / "plans")
+# PLANS_DIR is project-local, not under VIBE_HOME — plans co-locate with the
+# code they describe so multiple projects don't collide and a plan stays with
+# its repo. Resolved from cwd at access time; stable for the duration of a
+# session because vibe-cli doesn't chdir.
+PLANS_DIR = GlobalPath(lambda: Path.cwd() / ".vibe" / "plans")
 
 DEFAULT_TOOL_DIR = GlobalPath(lambda: VIBE_ROOT / "core" / "tools" / "builtins")
