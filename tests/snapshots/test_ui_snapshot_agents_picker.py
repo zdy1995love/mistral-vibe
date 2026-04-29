@@ -11,10 +11,8 @@ from vibe.core.config._settings import ModelConfig
 def _agents_picker_config():
     models = [
         ModelConfig(
-            name="mistral-vibe-cli-latest",
-            provider="mistral",
-            alias="devstral",
-        ),
+            name="mistral-vibe-cli-latest", provider="mistral", alias="devstral"
+        )
     ]
     return build_test_vibe_config(
         models=models,

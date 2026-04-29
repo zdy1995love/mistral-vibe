@@ -53,6 +53,7 @@ from vibe.cli.textual_ui.notifications import (
 from vibe.cli.textual_ui.quit_manager import QuitManager
 from vibe.cli.textual_ui.remote import RemoteSessionManager, is_progress_event
 from vibe.cli.textual_ui.session_exit import print_session_resume_message
+from vibe.cli.textual_ui.widgets.agents_picker import AgentsPickerApp
 from vibe.cli.textual_ui.widgets.approval_app import ApprovalApp
 from vibe.cli.textual_ui.widgets.banner.banner import Banner
 from vibe.cli.textual_ui.widgets.chat_input import ChatInputContainer
@@ -82,7 +83,6 @@ from vibe.cli.textual_ui.widgets.messages import (
     WarningMessage,
     WhatsNewMessage,
 )
-from vibe.cli.textual_ui.widgets.agents_picker import AgentsPickerApp
 from vibe.cli.textual_ui.widgets.model_picker import ModelPickerApp
 from vibe.cli.textual_ui.widgets.narrator_status import NarratorStatus
 from vibe.cli.textual_ui.widgets.no_markup_static import NoMarkupStatic
