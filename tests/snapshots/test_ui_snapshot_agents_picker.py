@@ -5,10 +5,19 @@ from textual.pilot import Pilot
 from tests.conftest import build_test_vibe_config
 from tests.snapshots.base_snapshot_test_app import BaseSnapshotTestApp
 from tests.snapshots.snap_compare import SnapCompare
+from vibe.core.config._settings import ModelConfig
 
 
 def _agents_picker_config():
+    models = [
+        ModelConfig(
+            name="mistral-vibe-cli-latest",
+            provider="mistral",
+            alias="devstral",
+        ),
+    ]
     return build_test_vibe_config(
+        models=models,
         active_model="devstral",
         disable_welcome_banner_animation=True,
         displayed_workdir="/test/workdir",
