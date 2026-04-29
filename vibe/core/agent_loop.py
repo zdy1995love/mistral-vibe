@@ -136,6 +136,14 @@ class ToolDecision(BaseModel):
     feedback: str | None = None
 
 
+# Tools that the PLAN profile allowlists for plan-file paths. The plan-mode
+# dispatch gate honors their resolve_permission ALWAYS verdict (a path-based
+# allowlist hit) and lets them through. Other mutating tools may resolve to
+# ALWAYS for unrelated reasons (e.g. Task auto-approving the explore
+# subagent) — those must stay blocked, hence this restricted allowlist.
+_PLAN_FILE_WRITE_TOOLS = frozenset({"write_file", "search_replace"})
+
+
 class AgentLoopError(Exception):
     """Base exception for AgentLoop errors."""
 
@@ -600,10 +608,20 @@ class AgentLoop:
 
             case MiddlewareAction.INJECT_MESSAGE:
                 if result.message:
-                    injected_message = LLMMessage(
-                        role=Role.user, content=result.message, injected=True
-                    )
-                    self.messages.append(injected_message)
+                    # Strict backends (Mistral via vLLM) reject [tool, user]
+                    # sequences with a 400. Middleware injects a Role.user
+                    # message; if the previous message is a tool result, an
+                    # assistant turn must come first. Skip silently — the
+                    # middleware will get another shot once the assistant
+                    # responds. (Sparse reminders are sparse by design;
+                    # missing one occurrence is acceptable.)
+                    if self.messages and self.messages[-1].role == Role.tool:
+                        pass
+                    else:
+                        injected_message = LLMMessage(
+                            role=Role.user, content=result.message, injected=True
+                        )
+                        self.messages.append(injected_message)
 
             case MiddlewareAction.COMPACT:
                 old_tokens = result.metadata.get(
@@ -836,20 +854,41 @@ class AgentLoop:
             return
 
         # Plan-mode write gate: block tools that mutate state when the active
-        # agent profile is PLAN. Read-only tools (mutates_state=False) and tools
-        # called outside plan mode fall through unchanged. The substring
-        # "[Plan mode: write operations disabled]" is part of the contract;
-        # tests substring-match on it.
+        # agent profile is PLAN. Carve-out: write_file and search_replace
+        # bypass the gate when their resolve_permission returns ALWAYS,
+        # which the PLAN profile sets via the plan-file allowlist
+        # (<cwd>/.vibe/plans/*). Without this carve-out, the system reminder
+        # telling the LLM to author the plan via write_file would be
+        # impossible to follow. The carve-out is restricted to these two
+        # tool names because other tools may resolve to ALWAYS for unrelated
+        # reasons (e.g., Task auto-approves the explore subagent) — those
+        # must stay blocked in plan mode.
+        # The substring "[Plan mode: write operations disabled]" is part of
+        # the contract; tests substring-match on it.
         if (
             self.agent_manager.active_profile.name == BuiltinAgentName.PLAN
             and tool_instance.__class__.mutates_state
         ):
-            yield self._tool_failure_event(
-                tool_call,
-                f"<{TOOL_ERROR_TAG}>[Plan mode: write operations disabled]</{TOOL_ERROR_TAG}>",
-                span=span,
-            )
-            return
+            allowlisted = False
+            if tool_call.tool_name in _PLAN_FILE_WRITE_TOOLS:
+                permission_ctx: PermissionContext | None = None
+                try:
+                    permission_ctx = tool_instance.resolve_permission(
+                        tool_call.validated_args
+                    )
+                except Exception:
+                    permission_ctx = None
+                allowlisted = (
+                    permission_ctx is not None
+                    and permission_ctx.permission == ToolPermission.ALWAYS
+                )
+            if not allowlisted:
+                yield self._tool_failure_event(
+                    tool_call,
+                    f"<{TOOL_ERROR_TAG}>[Plan mode: write operations disabled]</{TOOL_ERROR_TAG}>",
+                    span=span,
+                )
+                return
 
         decision: ToolDecision | None = None
         try:

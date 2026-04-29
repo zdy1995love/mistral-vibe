@@ -137,6 +137,35 @@ class TestPlanModeDispatchGate:
         assert PLAN_MODE_ERROR in (tool_results[0].error or "")
 
     @pytest.mark.asyncio
+    async def test_write_to_plan_path_allowed_in_plan_mode(self) -> None:
+        """The PLAN profile's allowlist for plans_dir/* must actually take
+        effect: the LLM must be able to author the plan file the system
+        reminder told it to write. resolve_permission returns ALWAYS for
+        plan paths, and the dispatch gate bypasses on ALWAYS.
+        """
+        from vibe.core.paths import PLANS_DIR
+
+        plan_path = PLANS_DIR.path / "test-plan.md"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        backend = FakeBackend([
+            [mock_llm_chunk(tool_calls=[_write_file_tool_call(str(plan_path), content="# Plan\n")])],
+            [mock_llm_chunk(content="done")],
+        ])
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
+        )
+
+        events = [e async for e in loop.act("write the plan")]
+        tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
+
+        assert len(tool_results) == 1
+        # Gate must NOT have fired — write to plan path is allowlisted.
+        assert PLAN_MODE_ERROR not in (tool_results[0].error or "")
+        assert plan_path.exists()
+        assert plan_path.read_text() == "# Plan\n"
+
+    @pytest.mark.asyncio
     async def test_error_string_is_wrapped_in_tool_error_tag(self, tmp_path) -> None:
         target = tmp_path / "f.txt"
         backend = FakeBackend([

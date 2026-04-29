@@ -231,6 +231,51 @@ class TestReadOnlyAgentMiddleware:
             assert r.message is None
 
     @pytest.mark.asyncio
+    async def test_sparse_reminder_skipped_when_prev_message_is_tool(
+        self, vibe_config: VibeConfig
+    ) -> None:
+        """Strict backends (Mistral via vLLM) reject [tool, user] sequences.
+        The agent_loop's middleware-result handler must skip Role.user
+        injections when the last message is a tool result.
+
+        Tested at the agent_loop integration level since the skip lives
+        in agent_loop._handle_middleware_result, not in middleware itself.
+        """
+        from tests.conftest import build_test_agent_loop, build_test_vibe_config
+        from vibe.core.types import LLMMessage, Role
+        from vibe.core.middleware import (
+            ConversationContext,
+            MiddlewareAction,
+            MiddlewareResult,
+        )
+
+        cfg = build_test_vibe_config()
+        loop = build_test_agent_loop(config=cfg)
+        # Seed messages so last is a tool result.
+        loop.messages.append(LLMMessage(role=Role.user, content="hi"))
+        loop.messages.append(LLMMessage(role=Role.assistant, content="ok"))
+        loop.messages.append(LLMMessage(role=Role.tool, content="result"))
+        prev_count = len(loop.messages)
+
+        result = MiddlewareResult(
+            action=MiddlewareAction.INJECT_MESSAGE, message="reminder"
+        )
+        async for _ in loop._handle_middleware_result(result):
+            pass
+
+        # No injection should have happened (last was tool).
+        assert len(loop.messages) == prev_count
+
+        # Now last is assistant — injection IS allowed.
+        loop.messages.append(LLMMessage(role=Role.assistant, content="next"))
+        prev_count = len(loop.messages)
+        async for _ in loop._handle_middleware_result(result):
+            pass
+        assert len(loop.messages) == prev_count + 1
+        assert loop.messages[-1].role == Role.user
+        assert loop.messages[-1].content == "reminder"
+
+    @pytest.mark.asyncio
     async def test_sparse_reminder_resets_on_exit_and_reentry(
         self, ctx: ConversationContext
     ) -> None:
