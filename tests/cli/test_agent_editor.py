@@ -64,8 +64,27 @@ def test_resolve_edit_path_returns_existing_override_on_second_call(
 
     first = resolve_edit_path("default", manager)
     first.write_text("description = 'Hand-edited'\nsafety = 'neutral'\n")
+    # reload_from_disk() is required so the agents dir (just created by the
+    # first resolve_edit_path call) is picked up by _compute_search_paths;
+    # without it, _find_on_disk_toml returns None and the second call would
+    # overwrite the hand-edited content.
     manager.reload_from_disk()
     second = resolve_edit_path("default", manager)
 
     assert first == second
     assert "Hand-edited" in second.read_text()
+
+
+def test_resolve_edit_path_raises_for_unknown_agent(tmp_path: Path) -> None:
+    config = build_test_vibe_config(
+        agent_paths=[tmp_path / "agents"],
+        include_project_context=False,
+        include_prompt_detail=False,
+    )
+    (tmp_path / "agents").mkdir()
+    manager = AgentManager(lambda: config)
+
+    from vibe.cli.textual_ui.agent_editor import AgentEditorError
+
+    with pytest.raises(AgentEditorError):
+        resolve_edit_path("does-not-exist", manager)
