@@ -94,10 +94,6 @@ class TestCommandRegistry:
         registry = CommandRegistry()
         assert registry.get_command_name("/style") == "style"
 
-    def test_output_style_alias_resolves(self) -> None:
-        registry = CommandRegistry()
-        assert registry.get_command_name("/output-style") == "style"
-
     def test_parse_style_command_with_arg(self) -> None:
         registry = CommandRegistry()
         result = registry.parse_command("/style concise")
