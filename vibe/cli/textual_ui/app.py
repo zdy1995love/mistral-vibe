@@ -1195,8 +1195,14 @@ class VibeApp(App):  # noqa: PLR0904
                 "fresh conversation."
             )
         )
-        chat = self._cached_chat or self.query_one("#chat", ChatScroll)
-        chat.scroll_home(animate=False)
+        # Show the seed as a UserMessage so the user can see what the LLM is
+        # implementing against. Without this, only the marker + LLM responses
+        # are visible and the seed (the full plan + path) is invisible from
+        # the chat panel. The act(seed) that runs next appends the user
+        # message at index 1 in agent_loop.messages (clear_history left only
+        # [system] there), so message_index=1 keeps the widget/message map
+        # aligned for rewind and windowing.
+        await self._mount_and_scroll(UserMessage(seed, message_index=1))
 
         # Reflect the new profile (chip + banner + profile widgets).
         self._on_profile_changed()
