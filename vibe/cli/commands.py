@@ -19,6 +19,11 @@ class CommandRegistry:
         if excluded_commands is None:
             excluded_commands = []
         self.commands = {
+            "agents": Command(
+                aliases=frozenset(["/agents"]),
+                description="List, preview, and edit available agents",
+                handler="_show_agents",
+            ),
             "help": Command(
                 aliases=frozenset(["/help"]),
                 description="Show help message",
