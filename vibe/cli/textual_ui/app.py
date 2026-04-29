@@ -1844,10 +1844,13 @@ class VibeApp(App):  # noqa: PLR0904
             self.agent_loop.agent_manager.active_profile.name == BuiltinAgentName.PLAN
         )
         if currently_in_plan:
-            target = (
-                self.agent_loop.agent_manager.pre_plan_profile
-                or BuiltinAgentName.DEFAULT
-            )
+            stashed = self.agent_loop.agent_manager.pre_plan_profile
+            target = stashed or BuiltinAgentName.DEFAULT
+            # Defensive: a custom pre-plan profile may have been removed
+            # while the user was in plan mode (e.g., agent toml deleted).
+            # Fall back to DEFAULT rather than letting get_agent raise.
+            if stashed and stashed not in self.agent_loop.agent_manager.available_agents:
+                target = BuiltinAgentName.DEFAULT
         else:
             target = BuiltinAgentName.PLAN
 

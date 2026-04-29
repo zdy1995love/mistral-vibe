@@ -140,9 +140,17 @@ class ExitPlanMode(
         if answer_lower == "yes, and auto approve edits":
             target_profile = BuiltinAgentName.ACCEPT_EDITS
         elif answer_lower == "yes, and request approval for edits":
-            target_profile = (
-                ctx.agent_manager.pre_plan_profile or BuiltinAgentName.DEFAULT
-            )
+            stashed = ctx.agent_manager.pre_plan_profile
+            target_profile = stashed or BuiltinAgentName.DEFAULT
+            # Defensive: stashed profile may have been removed mid-plan
+            # (e.g., agent toml deleted while user was planning).
+            available = getattr(ctx.agent_manager, "available_agents", None)
+            if (
+                stashed
+                and available is not None
+                and stashed not in available
+            ):
+                target_profile = BuiltinAgentName.DEFAULT
         elif answer.is_other:
             yield ExitPlanModeResult(
                 switched=False,

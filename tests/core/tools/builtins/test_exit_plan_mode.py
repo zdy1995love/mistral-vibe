@@ -25,6 +25,7 @@ from vibe.core.tools.builtins.exit_plan_mode import (
 class MockAgentManager:
     active_profile: AgentProfile
     pre_plan_profile: str | None = None
+    available_agents: dict[str, AgentProfile] = field(default_factory=dict)
     _switched_to: list[str] = field(default_factory=list)
 
     def switch_profile(self, name: str) -> None:
@@ -227,6 +228,14 @@ class TestForkOnApproval:
         manager = MockAgentManager(
             active_profile=_plan_profile(),
             pre_plan_profile=BuiltinAgentName.AUTO_APPROVE,
+            available_agents={
+                BuiltinAgentName.AUTO_APPROVE: AgentProfile(
+                    name=BuiltinAgentName.AUTO_APPROVE,
+                    display_name="Auto",
+                    description="",
+                    safety=AgentSafety.SAFE,
+                ),
+            },
         )
         fork_cb = MockForkToDevCallback()
         ctx = InvokeContext(
@@ -239,6 +248,30 @@ class TestForkOnApproval:
         result = await collect_result(tool.run(ExitPlanModeArgs(), ctx))
         assert result.switched is True
         assert fork_cb.calls[0][2] == BuiltinAgentName.AUTO_APPROVE
+
+    @pytest.mark.asyncio
+    async def test_yes_request_approval_falls_back_when_pre_plan_profile_missing(
+        self, tool: ExitPlanMode, plan_file: Path
+    ) -> None:
+        """Defensive: pre_plan_profile may have been removed (custom agent
+        toml deleted) while user was in plan mode. Falls back to DEFAULT.
+        """
+        manager = MockAgentManager(
+            active_profile=_plan_profile(),
+            pre_plan_profile="some-deleted-custom-agent",
+            available_agents={},  # the named profile is no longer present
+        )
+        fork_cb = MockForkToDevCallback()
+        ctx = InvokeContext(
+            tool_call_id="t1",
+            agent_manager=manager,  # type: ignore[arg-type]
+            user_input_callback=MockCallback(_yes_request_approval()),
+            plan_file_path=plan_file,
+            request_fork_to_dev_callback=fork_cb,
+        )
+        result = await collect_result(tool.run(ExitPlanModeArgs(), ctx))
+        assert result.switched is True
+        assert fork_cb.calls[0][2] == BuiltinAgentName.DEFAULT
 
     @pytest.mark.asyncio
     async def test_yes_request_approval_falls_back_to_default(
