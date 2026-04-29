@@ -182,6 +182,84 @@ class TestReadOnlyAgentMiddleware:
             assert result.message is None
 
     @pytest.mark.asyncio
+    async def test_sparse_reminder_fires_periodically_while_active(
+        self, ctx: ConversationContext
+    ) -> None:
+        middleware = ReadOnlyAgentMiddleware(
+            lambda: BUILTIN_AGENTS[BuiltinAgentName.PLAN],
+            BuiltinAgentName.PLAN,
+            REMINDER,
+            EXIT_MSG,
+            sparse_reminder="sparse-msg",
+            sparse_every_n_turns=3,
+        )
+
+        # Turn 1: entry — full reminder
+        r = await middleware.before_turn(ctx)
+        assert r.action == MiddlewareAction.INJECT_MESSAGE
+        assert r.message == REMINDER
+
+        # Turns 2..3: continue, no injection
+        for _ in range(2):
+            r = await middleware.before_turn(ctx)
+            assert r.action == MiddlewareAction.CONTINUE
+
+        # Turn 4: 3 turns since last reminder → sparse fires
+        r = await middleware.before_turn(ctx)
+        assert r.action == MiddlewareAction.INJECT_MESSAGE
+        assert r.message == "sparse-msg"
+
+        # Turns 5..6: continue
+        for _ in range(2):
+            r = await middleware.before_turn(ctx)
+            assert r.action == MiddlewareAction.CONTINUE
+
+        # Turn 7: another sparse fire
+        r = await middleware.before_turn(ctx)
+        assert r.action == MiddlewareAction.INJECT_MESSAGE
+        assert r.message == "sparse-msg"
+
+    @pytest.mark.asyncio
+    async def test_sparse_reminder_disabled_by_default(
+        self, ctx: ConversationContext
+    ) -> None:
+        middleware = _build_middleware(lambda: BUILTIN_AGENTS[BuiltinAgentName.PLAN])
+        await middleware.before_turn(ctx)  # entry full
+        for _ in range(20):
+            r = await middleware.before_turn(ctx)
+            assert r.action == MiddlewareAction.CONTINUE
+            assert r.message is None
+
+    @pytest.mark.asyncio
+    async def test_sparse_reminder_resets_on_exit_and_reentry(
+        self, ctx: ConversationContext
+    ) -> None:
+        current_profile: AgentProfile = BUILTIN_AGENTS[BuiltinAgentName.PLAN]
+        middleware = ReadOnlyAgentMiddleware(
+            lambda: current_profile,
+            BuiltinAgentName.PLAN,
+            REMINDER,
+            EXIT_MSG,
+            sparse_reminder="sparse-msg",
+            sparse_every_n_turns=2,
+        )
+
+        # Entry
+        await middleware.before_turn(ctx)
+        # Turn 1 active (no inject)
+        r = await middleware.before_turn(ctx)
+        assert r.action == MiddlewareAction.CONTINUE
+        # Exit before sparse fires
+        current_profile = BUILTIN_AGENTS[BuiltinAgentName.DEFAULT]
+        r = await middleware.before_turn(ctx)
+        assert r.message == EXIT_MSG
+
+        # Re-enter
+        current_profile = BUILTIN_AGENTS[BuiltinAgentName.PLAN]
+        r = await middleware.before_turn(ctx)
+        assert r.message == REMINDER  # full reminder, NOT sparse
+
+    @pytest.mark.asyncio
     async def test_multiple_turns_after_exit(self, ctx: ConversationContext) -> None:
         current_profile: AgentProfile = BUILTIN_AGENTS[BuiltinAgentName.PLAN]
         middleware = _build_middleware(lambda: current_profile)

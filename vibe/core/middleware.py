@@ -139,6 +139,17 @@ This is the only file you are allowed to edit. Make sure to create it early and 
 4. When your plan is complete, call the exit_plan_mode tool to request user approval and switch to implementation mode</{VIBE_WARNING_TAG}>"""
 
 
+def make_plan_agent_sparse_reminder(plan_file_path: str) -> str:
+    """Short reminder injected periodically while plan mode stays active, so
+    the LLM doesn't drift back into making edits across long planning turns.
+    """
+    return (
+        f"<{VIBE_WARNING_TAG}>Plan mode still active — read-only, except the "
+        f"plan file at {plan_file_path}. Call exit_plan_mode when the plan is "
+        f"ready.</{VIBE_WARNING_TAG}>"
+    )
+
+
 PLAN_AGENT_EXIT = f"""<{VIBE_WARNING_TAG}>Plan mode has ended. If you have a plan ready, you can now start executing it. If not, you can now use editing tools and make changes to the system.</{VIBE_WARNING_TAG}>"""
 
 CHAT_AGENT_REMINDER = f"""<{VIBE_WARNING_TAG}>Chat mode is active. The user wants to have a conversation -- ask questions, get explanations, or discuss code and architecture. You MUST NOT make any edits, run any non-readonly tools, or otherwise make any changes to the system. This supersedes any other instructions you have received. Instead, you should:
@@ -157,16 +168,33 @@ class ReadOnlyAgentMiddleware:
         agent_name: str,
         reminder: str | Callable[[], str],
         exit_message: str,
+        sparse_reminder: str | Callable[[], str] | None = None,
+        sparse_every_n_turns: int = 5,
     ) -> None:
         self._profile_getter = profile_getter
         self._agent_name = agent_name
         self._reminder = reminder
         self.exit_message = exit_message
+        self._sparse_reminder = sparse_reminder
+        self._sparse_every_n_turns = max(1, sparse_every_n_turns)
         self._was_active = False
+        # Number of turns elapsed since the last reminder injection while
+        # active. Reset on entry/exit transitions and on each sparse fire.
+        self._turns_since_reminder = 0
 
     @property
     def reminder(self) -> str:
         return self._reminder() if callable(self._reminder) else self._reminder
+
+    @property
+    def sparse_reminder_text(self) -> str | None:
+        if self._sparse_reminder is None:
+            return None
+        return (
+            self._sparse_reminder()
+            if callable(self._sparse_reminder)
+            else self._sparse_reminder
+        )
 
     def _is_active(self) -> bool:
         return self._profile_getter().name == self._agent_name
@@ -177,21 +205,33 @@ class ReadOnlyAgentMiddleware:
 
         if was_active and not is_active:
             self._was_active = False
+            self._turns_since_reminder = 0
             return MiddlewareResult(
                 action=MiddlewareAction.INJECT_MESSAGE, message=self.exit_message
             )
 
         if is_active and not was_active:
             self._was_active = True
+            self._turns_since_reminder = 0
             return MiddlewareResult(
                 action=MiddlewareAction.INJECT_MESSAGE, message=self.reminder
             )
+
+        if is_active:
+            self._turns_since_reminder += 1
+            sparse = self.sparse_reminder_text
+            if sparse and self._turns_since_reminder >= self._sparse_every_n_turns:
+                self._turns_since_reminder = 0
+                return MiddlewareResult(
+                    action=MiddlewareAction.INJECT_MESSAGE, message=sparse
+                )
 
         self._was_active = is_active
         return MiddlewareResult()
 
     def reset(self, reset_reason: ResetReason = ResetReason.STOP) -> None:
         self._was_active = False
+        self._turns_since_reminder = 0
 
 
 class MiddlewarePipeline:

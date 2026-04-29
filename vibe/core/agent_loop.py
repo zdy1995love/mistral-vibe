@@ -48,6 +48,7 @@ from vibe.core.middleware import (
     ResetReason,
     TurnLimitMiddleware,
     make_plan_agent_reminder,
+    make_plan_agent_sparse_reminder,
 )
 from vibe.core.plan_session import PlanSession
 from vibe.core.prompts import UtilityPrompt
@@ -572,6 +573,10 @@ class AgentLoop:
                 BuiltinAgentName.PLAN,
                 lambda: make_plan_agent_reminder(self._plan_session.plan_file_path_str),
                 PLAN_AGENT_EXIT,
+                sparse_reminder=lambda: make_plan_agent_sparse_reminder(
+                    self._plan_session.plan_file_path_str
+                ),
+                sparse_every_n_turns=5,
             )
         )
         self.middleware_pipeline.add(
