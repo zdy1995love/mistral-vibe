@@ -58,6 +58,7 @@ class TestBuiltinMutatesStateMatrix:
         from vibe.core.tools.builtins.exit_plan_mode import ExitPlanMode
         from vibe.core.tools.builtins.grep import Grep
         from vibe.core.tools.builtins.read_file import ReadFile
+        from vibe.core.tools.builtins.skill import Skill
         from vibe.core.tools.builtins.todo import Todo
         from vibe.core.tools.builtins.webfetch import WebFetch
         from vibe.core.tools.builtins.websearch import WebSearch
@@ -70,18 +71,19 @@ class TestBuiltinMutatesStateMatrix:
         assert Todo.mutates_state is False
         assert ExitPlanMode.mutates_state is False
         assert EnterPlanMode.mutates_state is False
+        # Skill loads SKILL.md content only — any actions a skill prompts are
+        # separate tool calls, each gated by the dispatch layer independently.
+        assert Skill.mutates_state is False
 
     def test_write_or_exec_builtins(self) -> None:
         from vibe.core.tools.builtins.bash import Bash
         from vibe.core.tools.builtins.search_replace import SearchReplace
-        from vibe.core.tools.builtins.skill import Skill
         from vibe.core.tools.builtins.task import Task
         from vibe.core.tools.builtins.write_file import WriteFile
 
         assert Bash.mutates_state is True
         assert WriteFile.mutates_state is True
         assert SearchReplace.mutates_state is True
-        assert Skill.mutates_state is True
         assert Task.mutates_state is True
 
 

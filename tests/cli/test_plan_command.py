@@ -30,7 +30,13 @@ class TestSlashCommandsNotFilteredByPlanMode:
     def test_parser_does_not_consult_agent_state(self) -> None:
         sig = inspect.signature(CommandRegistry.__init__)
         params = set(sig.parameters.keys()) - {"self"}
-        assert params == {"excluded_commands"}
+        # The contract is "no agent / profile / mode awareness", not the
+        # exact param list — adding unrelated kwargs (e.g., a logger) shouldn't
+        # break this test.
+        assert "agent" not in params
+        assert "profile" not in params
+        assert "mode" not in params
+        assert "agent_manager" not in params
 
     def test_parse_help_succeeds_regardless_of_external_state(self) -> None:
         registry = CommandRegistry()

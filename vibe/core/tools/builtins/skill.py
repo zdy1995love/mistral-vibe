@@ -47,7 +47,7 @@ class Skill(
         "The skill will inject detailed instructions, workflows, and access to bundled resources "
         "(scripts, references, templates) into the conversation context."
     )
-    mutates_state: ClassVar[bool] = True
+    mutates_state: ClassVar[bool] = False
 
     @classmethod
     def format_call_display(cls, args: SkillArgs) -> ToolCallDisplay:

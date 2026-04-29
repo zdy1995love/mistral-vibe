@@ -111,7 +111,7 @@ class EnterPlanMode(
             return
 
         answer = result.answers[0]
-        if answer.answer.lower().startswith("yes"):
+        if answer.answer.lower() == "yes, enter plan mode":
             if ctx.switch_agent_callback:
                 await ctx.switch_agent_callback(BuiltinAgentName.PLAN)
             else:
@@ -121,6 +121,13 @@ class EnterPlanMode(
                 message=(
                     "Switched to plan mode. Use ExitPlanMode when ready to implement."
                 ),
+            )
+            return
+
+        if answer.is_other:
+            yield EnterPlanModeResult(
+                switched=False,
+                message=f"Staying in the current profile. User feedback: {answer.answer}",
             )
             return
 
