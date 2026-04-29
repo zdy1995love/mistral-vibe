@@ -809,66 +809,88 @@ class VibeAcpAgentLoop(AcpAgent):
     async def _run_agent_loop(
         self, session: AcpSessionLoop, prompt: str, client_message_id: str | None = None
     ) -> AsyncGenerator[SessionUpdate]:
-        rendered_prompt = render_path_prompt(prompt, base_dir=Path.cwd())
+        # Wrap act() in a loop so plan-mode fork-to-dev (staged by
+        # ExitPlanMode) re-enters with the plan as seed in a fresh context.
+        # Currently unreachable in ACP because user_input_callback is unset
+        # (so ExitPlanMode itself errors out), but kept for forward-compat
+        # if/when ACP gains interactive prompts.
+        current_prompt = render_path_prompt(prompt, base_dir=Path.cwd())
+        first_iteration = True
 
-        async with aclosing(
-            session.agent_loop.act(rendered_prompt, client_message_id=client_message_id)
-        ) as events:
-            async for event in events:
-                if isinstance(event, AssistantEvent):
-                    yield AgentMessageChunk(
-                        session_update="agent_message_chunk",
-                        content=TextContentBlock(type="text", text=event.content),
-                        message_id=event.message_id,
-                    )
+        while True:
+            if not first_iteration:
+                # Re-render so any cwd-aware tokens in the seed are stable.
+                current_prompt = render_path_prompt(current_prompt, base_dir=Path.cwd())
+            first_iteration = False
 
-                elif isinstance(event, ReasoningEvent):
-                    yield AgentThoughtChunk(
-                        session_update="agent_thought_chunk",
-                        content=TextContentBlock(type="text", text=event.content),
-                        message_id=event.message_id,
-                    )
-
-                elif isinstance(event, ToolCallEvent):
-                    if issubclass(event.tool_class, BaseAcpTool):
-                        event.tool_class.update_tool_state(
-                            tool_manager=session.agent_loop.tool_manager,
-                            client=self.client,
-                            session_id=session.id,
-                            tool_call_id=event.tool_call_id,
+            async with aclosing(
+                session.agent_loop.act(
+                    current_prompt, client_message_id=client_message_id
+                )
+            ) as events:
+                async for event in events:
+                    if isinstance(event, AssistantEvent):
+                        yield AgentMessageChunk(
+                            session_update="agent_message_chunk",
+                            content=TextContentBlock(type="text", text=event.content),
+                            message_id=event.message_id,
                         )
 
-                    session_update = tool_call_session_update(event)
-                    if session_update:
-                        yield session_update
+                    elif isinstance(event, ReasoningEvent):
+                        yield AgentThoughtChunk(
+                            session_update="agent_thought_chunk",
+                            content=TextContentBlock(
+                                type="text", text=event.content
+                            ),
+                            message_id=event.message_id,
+                        )
 
-                elif isinstance(event, ToolResultEvent):
-                    session_update = tool_result_session_update(event)
-                    if session_update:
-                        yield session_update
-
-                elif isinstance(event, ToolStreamEvent):
-                    yield ToolCallProgress(
-                        session_update="tool_call_update",
-                        tool_call_id=event.tool_call_id,
-                        content=[
-                            ContentToolCallContent(
-                                type="content",
-                                content=TextContentBlock(
-                                    type="text", text=event.message
-                                ),
+                    elif isinstance(event, ToolCallEvent):
+                        if issubclass(event.tool_class, BaseAcpTool):
+                            event.tool_class.update_tool_state(
+                                tool_manager=session.agent_loop.tool_manager,
+                                client=self.client,
+                                session_id=session.id,
+                                tool_call_id=event.tool_call_id,
                             )
-                        ],
-                    )
 
-                elif isinstance(event, CompactStartEvent):
-                    yield create_compact_start_session_update(event)
+                        session_update = tool_call_session_update(event)
+                        if session_update:
+                            yield session_update
 
-                elif isinstance(event, CompactEndEvent):
-                    yield create_compact_end_session_update(event)
+                    elif isinstance(event, ToolResultEvent):
+                        session_update = tool_result_session_update(event)
+                        if session_update:
+                            yield session_update
 
-                elif isinstance(event, AgentProfileChangedEvent):
-                    pass
+                    elif isinstance(event, ToolStreamEvent):
+                        yield ToolCallProgress(
+                            session_update="tool_call_update",
+                            tool_call_id=event.tool_call_id,
+                            content=[
+                                ContentToolCallContent(
+                                    type="content",
+                                    content=TextContentBlock(
+                                        type="text", text=event.message
+                                    ),
+                                )
+                            ],
+                        )
+
+                    elif isinstance(event, CompactStartEvent):
+                        yield create_compact_start_session_update(event)
+
+                    elif isinstance(event, CompactEndEvent):
+                        yield create_compact_end_session_update(event)
+
+                    elif isinstance(event, AgentProfileChangedEvent):
+                        pass
+
+            # Plan-mode fork: ExitPlanMode requested a wipe-and-reseed.
+            if session.agent_loop.pending_fork_to_dev is None:
+                break
+            current_prompt = await session.agent_loop.fork_to_dev()
+            client_message_id = None
 
     @override
     async def close_session(

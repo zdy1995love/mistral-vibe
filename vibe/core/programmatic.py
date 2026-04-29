@@ -80,14 +80,23 @@ def run_programmatic(
                         )
                         formatter.on_event(next_event)
             else:
-                async with aclosing(agent_loop.act(prompt)) as events:
-                    async for event in events:
-                        formatter.on_event(event)
-                        if (
-                            isinstance(event, AssistantEvent)
-                            and event.stopped_by_middleware
-                        ):
-                            raise ConversationLimitException(event.content)
+                # Loop on plan-mode fork: ExitPlanMode stages a fork-to-dev,
+                # we wipe context and re-enter act() with the plan as seed.
+                # Currently unreachable in programmatic mode (no user_input
+                # callback → ExitPlanMode errors out), kept forward-compat.
+                current_prompt = prompt
+                while True:
+                    async with aclosing(agent_loop.act(current_prompt)) as events:
+                        async for event in events:
+                            formatter.on_event(event)
+                            if (
+                                isinstance(event, AssistantEvent)
+                                and event.stopped_by_middleware
+                            ):
+                                raise ConversationLimitException(event.content)
+                    if agent_loop.pending_fork_to_dev is None:
+                        break
+                    current_prompt = await agent_loop.fork_to_dev()
 
             return formatter.finalize()
         finally:
