@@ -40,3 +40,26 @@ class TestPlanSession:
         session1 = PlanSession()
         session2 = PlanSession()
         assert session1.plan_file_path != session2.plan_file_path
+
+
+class TestPlansDirIsCwdLocal:
+    """PLANS_DIR is project-local (resolved from cwd) — NOT under VIBE_HOME.
+
+    Co-locates plans with the code they describe; multiple projects don't
+    collide on slug names; a plan stays with its repo.
+    """
+
+    def test_plans_dir_is_under_cwd(self, tmp_working_directory) -> None:
+        # tmp_working_directory fixture chdir's to an isolated path; PLANS_DIR
+        # must resolve under it, not under the global config dir.
+        assert PLANS_DIR.path == tmp_working_directory / ".vibe" / "plans"
+
+    def test_plans_dir_not_under_vibe_home(
+        self, tmp_working_directory, config_dir
+    ) -> None:
+        # config_dir is the monkeypatched VIBE_HOME for this test. PLANS_DIR
+        # is intentionally NOT under it.
+        from vibe.core.paths import VIBE_HOME
+
+        assert PLANS_DIR.path != VIBE_HOME.path / "plans"
+        assert not str(PLANS_DIR.path).startswith(str(config_dir))
