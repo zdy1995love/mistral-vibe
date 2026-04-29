@@ -39,6 +39,14 @@ class QuestionApp(Container):
         Binding("down", "move_down", "Down", show=False),
         Binding("enter", "select", "Select", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
+        # Preview scrolling — focus stays on options, but pgup/pgdn scrolls
+        # the (potentially long) content_preview block. Without these, long
+        # plan content from ExitPlanMode gets visually clipped at 50vh with
+        # no keyboard-only way to read past the cutoff.
+        Binding("pageup", "scroll_preview_up", "Scroll preview up", show=False),
+        Binding("pagedown", "scroll_preview_down", "Scroll preview down", show=False),
+        Binding("ctrl+u", "scroll_preview_up", "Scroll preview up", show=False),
+        Binding("ctrl+d", "scroll_preview_down", "Scroll preview down", show=False),
     ]
 
     class Answered(Message):
@@ -66,6 +74,7 @@ class QuestionApp(Container):
         self.submit_widget: NoMarkupStatic | None = None
         self.help_widget: NoMarkupStatic | None = None
         self.tabs_widget: NoMarkupStatic | None = None
+        self.content_preview_scroll: VerticalScroll | None = None
 
     @property
     def _current_question(self) -> Question:
@@ -111,7 +120,10 @@ class QuestionApp(Container):
 
     def compose(self) -> ComposeResult:
         if self.args.content_preview:
-            with VerticalScroll(classes="question-content-preview"):
+            self.content_preview_scroll = VerticalScroll(
+                classes="question-content-preview"
+            )
+            with self.content_preview_scroll:
                 yield AnsiMarkdown(
                     self.args.content_preview, classes="question-content-preview-text"
                 )
@@ -309,6 +321,8 @@ class QuestionApp(Container):
             help_text = "↑↓ navigate  Enter select  Esc cancel"
         if len(self.questions) > 1:
             help_text = "←→ questions  " + help_text
+        if self.args.content_preview:
+            help_text += "  PgUp/PgDn scroll preview"
         self.help_widget.update(help_text)
 
     def _store_other_text(self) -> None:
@@ -323,6 +337,14 @@ class QuestionApp(Container):
 
     def action_move_down(self) -> None:
         self.selected_option = (self.selected_option + 1) % self._total_options
+
+    def action_scroll_preview_up(self) -> None:
+        if self.content_preview_scroll is not None:
+            self.content_preview_scroll.scroll_page_up()
+
+    def action_scroll_preview_down(self) -> None:
+        if self.content_preview_scroll is not None:
+            self.content_preview_scroll.scroll_page_down()
 
     def _switch_question(self, new_idx: int) -> None:
         self.current_question_idx = new_idx
