@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import build_test_vibe_config
-from vibe.cli.textual_ui.agent_editor import resolve_edit_path
+from vibe.cli.textual_ui.agent_editor import AgentEditorError, resolve_edit_path
 from vibe.core.agents.manager import AgentManager
+from vibe.core.agents.models import BUILTIN_AGENTS
 
 
 @pytest.fixture
@@ -84,7 +85,24 @@ def test_resolve_edit_path_raises_for_unknown_agent(tmp_path: Path) -> None:
     (tmp_path / "agents").mkdir()
     manager = AgentManager(lambda: config)
 
-    from vibe.cli.textual_ui.agent_editor import AgentEditorError
-
     with pytest.raises(AgentEditorError):
         resolve_edit_path("does-not-exist", manager)
+
+
+def test_resolve_edit_path_raises_when_builtin_filtered_by_config(
+    tmp_path: Path,
+) -> None:
+    config = build_test_vibe_config(
+        agent_paths=[tmp_path / "agents"],
+        enabled_agents=["plan"],
+        include_project_context=False,
+        include_prompt_detail=False,
+    )
+    (tmp_path / "agents").mkdir()
+    manager = AgentManager(lambda: config, initial_agent="plan")
+
+    assert "default" in BUILTIN_AGENTS
+    assert "default" not in manager.available_agents
+
+    with pytest.raises(AgentEditorError):
+        resolve_edit_path("default", manager)
