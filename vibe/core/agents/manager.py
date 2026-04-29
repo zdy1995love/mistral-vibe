@@ -115,6 +115,23 @@ class AgentManager:
     def invalidate_config(self) -> None:
         self._cached_config = None
 
+    def reload_from_disk(self) -> None:
+        """Re-scan agent search paths and rebuild the available-agents map.
+
+        Lighter than the app-level `_reload_config()` — does NOT touch the
+        agent loop or message UI. Use after editing an agent TOML on disk
+        when only the agent registry needs to refresh. Active profile is
+        preserved by name; if its TOML was edited, the new content is picked
+        up. If the active agent was deleted, falls back to DEFAULT.
+        """
+        active_name = self.active_profile.name
+        self._search_paths = self._compute_search_paths(self._config)
+        self._available = self._discover_agents()
+        self.active_profile = self._available.get(
+            active_name, self._available[BuiltinAgentName.DEFAULT]
+        )
+        self._cached_config = None
+
     @staticmethod
     def _compute_search_paths(config: VibeConfig) -> list[Path]:
         paths: list[Path] = []

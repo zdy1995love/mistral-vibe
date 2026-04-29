@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.conftest import build_test_vibe_config
@@ -104,3 +106,61 @@ class TestAgentManager:
         )
         manager = AgentManager(lambda: config, initial_agent="plan")
         assert manager.active_profile.name == "plan"
+
+    def test_reload_from_disk_picks_up_new_agent(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        config = build_test_vibe_config(
+            agent_paths=[agents_dir],
+            include_project_context=False,
+            include_prompt_detail=False,
+        )
+        manager = AgentManager(lambda: config)
+        assert "freshly-baked" not in manager.available_agents
+
+        (agents_dir / "freshly-baked.toml").write_text(
+            "description = 'A new custom agent'\nsafety = 'neutral'\n"
+        )
+        manager.reload_from_disk()
+
+        assert "freshly-baked" in manager.available_agents
+        assert (
+            manager.available_agents["freshly-baked"].description
+            == "A new custom agent"
+        )
+
+    def test_reload_from_disk_re_reads_edited_agent(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        toml_path = agents_dir / "edited.toml"
+        toml_path.write_text("description = 'Old description'\n")
+        config = build_test_vibe_config(
+            agent_paths=[agents_dir],
+            include_project_context=False,
+            include_prompt_detail=False,
+        )
+        manager = AgentManager(lambda: config)
+        assert manager.available_agents["edited"].description == "Old description"
+
+        toml_path.write_text("description = 'New description'\n")
+        manager.reload_from_disk()
+        assert manager.available_agents["edited"].description == "New description"
+
+    def test_reload_from_disk_falls_back_to_default_when_active_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        toml_path = agents_dir / "ephemeral.toml"
+        toml_path.write_text("description = 'Will be deleted'\nsafety = 'neutral'\n")
+        config = build_test_vibe_config(
+            agent_paths=[agents_dir],
+            include_project_context=False,
+            include_prompt_detail=False,
+        )
+        manager = AgentManager(lambda: config, initial_agent="ephemeral")
+        assert manager.active_profile.name == "ephemeral"
+
+        toml_path.unlink()
+        manager.reload_from_disk()
+        assert manager.active_profile.name == "default"
