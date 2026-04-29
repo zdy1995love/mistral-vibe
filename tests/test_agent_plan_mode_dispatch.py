@@ -137,6 +137,73 @@ class TestPlanModeDispatchGate:
         assert PLAN_MODE_ERROR in (tool_results[0].error or "")
 
     @pytest.mark.asyncio
+    async def test_read_only_bash_allowed_in_plan_mode(self) -> None:
+        """Plan mode allows read-only bash commands (ls, find, grep, git log,
+        etc.) so the LLM can explore the repo while planning. Anything not
+        on the read-only allowlist stays blocked.
+        """
+        backend = FakeBackend([
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="bash", arguments=json.dumps({"command": "ls"})
+                            ),
+                        )
+                    ]
+                )
+            ],
+            [mock_llm_chunk(content="done")],
+        ])
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
+        )
+
+        events = [e async for e in loop.act("explore")]
+        tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
+
+        assert len(tool_results) == 1
+        # Gate should NOT have fired — `ls` is allowlisted in plan mode.
+        assert PLAN_MODE_ERROR not in (tool_results[0].error or "")
+
+    @pytest.mark.asyncio
+    async def test_non_allowlisted_bash_blocked_in_plan_mode(self) -> None:
+        """Bash commands outside the plan-mode read-only allowlist (e.g.
+        `rm`, `git commit`) stay blocked.
+        """
+        backend = FakeBackend([
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="bash",
+                                arguments=json.dumps({"command": "rm -rf /tmp/foo"}),
+                            ),
+                        )
+                    ]
+                )
+            ],
+            [mock_llm_chunk(content="done")],
+        ])
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
+        )
+
+        events = [e async for e in loop.act("delete a file")]
+        tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
+
+        assert len(tool_results) == 1
+        assert PLAN_MODE_ERROR in (tool_results[0].error or "")
+
+    @pytest.mark.asyncio
     async def test_write_to_plan_path_allowed_in_plan_mode(self) -> None:
         """The PLAN profile's allowlist for plans_dir/* must actually take
         effect: the LLM must be able to author the plan file the system

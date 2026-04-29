@@ -136,12 +136,14 @@ class ToolDecision(BaseModel):
     feedback: str | None = None
 
 
-# Tools that the PLAN profile allowlists for plan-file paths. The plan-mode
-# dispatch gate honors their resolve_permission ALWAYS verdict (a path-based
-# allowlist hit) and lets them through. Other mutating tools may resolve to
-# ALWAYS for unrelated reasons (e.g. Task auto-approving the explore
-# subagent) — those must stay blocked, hence this restricted allowlist.
-_PLAN_FILE_WRITE_TOOLS = frozenset({"write_file", "search_replace"})
+# Mutating tools whose resolve_permission ALWAYS verdict the plan-mode
+# dispatch gate honors. The PLAN profile narrows each of these to a strict
+# allowlist (plan-file path for write_file/search_replace; read-only command
+# list for bash) — the gate's ALWAYS-bypass is therefore tied to the PLAN
+# profile's intent. Other mutating tools may resolve to ALWAYS for unrelated
+# reasons (e.g. Task auto-approving the explore subagent) — those must stay
+# blocked in plan mode, hence this restricted allowlist.
+_PLAN_GATE_BYPASS_TOOLS = frozenset({"write_file", "search_replace", "bash"})
 
 
 class AgentLoopError(Exception):
@@ -854,15 +856,15 @@ class AgentLoop:
             return
 
         # Plan-mode write gate: block tools that mutate state when the active
-        # agent profile is PLAN. Carve-out: write_file and search_replace
-        # bypass the gate when their resolve_permission returns ALWAYS,
-        # which the PLAN profile sets via the plan-file allowlist
-        # (<cwd>/.vibe/plans/*). Without this carve-out, the system reminder
-        # telling the LLM to author the plan via write_file would be
-        # impossible to follow. The carve-out is restricted to these two
-        # tool names because other tools may resolve to ALWAYS for unrelated
-        # reasons (e.g., Task auto-approves the explore subagent) — those
-        # must stay blocked in plan mode.
+        # agent profile is PLAN. Carve-out: a small set of tools
+        # (_PLAN_GATE_BYPASS_TOOLS) may bypass when their resolve_permission
+        # returns ALWAYS — the PLAN profile narrows each of those tools to a
+        # specific allowlist:
+        #   * write_file / search_replace → plan-file path allowlist
+        #   * bash → read-only command allowlist (ls, find, grep, git log…)
+        # so an ALWAYS verdict from those tools always means "PLAN explicitly
+        # permits this". Other mutating tools (Task, MCP, etc.) stay blocked
+        # in plan mode regardless of their resolve_permission outcome.
         # The substring "[Plan mode: write operations disabled]" is part of
         # the contract; tests substring-match on it.
         if (
@@ -870,7 +872,7 @@ class AgentLoop:
             and tool_instance.__class__.mutates_state
         ):
             allowlisted = False
-            if tool_call.tool_name in _PLAN_FILE_WRITE_TOOLS:
+            if tool_call.tool_name in _PLAN_GATE_BYPASS_TOOLS:
                 permission_ctx: PermissionContext | None = None
                 try:
                     permission_ctx = tool_instance.resolve_permission(

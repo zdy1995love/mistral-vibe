@@ -87,22 +87,58 @@ class AgentProfile:
 CHAT_AGENT_TOOLS = ["grep", "read_file", "ask_user_question", "task"]
 
 
+# Read-only bash commands the LLM is allowed to run while in PLAN mode.
+# The plan-mode dispatch gate honors a Bash resolve_permission ALWAYS verdict
+# (allowlist hit on the first parsed sub-command) to let exploratory commands
+# like `ls`, `find`, `git log` through. Anything not in this list is blocked
+# with the standard "[Plan mode: write operations disabled]" error.
+#
+# Each entry is a command-prefix; Bash's resolve_permission matches the
+# entire parsed command against `entry` or `entry + " "`. Compound commands
+# (`a && b`, `a; b`, pipelines) are split first and ALL parts must match.
+#
+# Known gap: shell write redirections (`ls > file`, `cmd | tee out`) are NOT
+# detected here — the redirect operator is outside the parsed command tokens.
+# This is a pre-existing vibe-cli limitation, not specific to plan mode. If
+# you need stricter safety, add a redirect detector to the dispatch gate.
+_PLAN_BASH_READ_ONLY_ALLOWLIST = [
+    # File listing & inspection
+    "ls", "find", "tree", "cat", "head", "tail", "less", "more",
+    "file", "stat", "wc", "du", "df",
+    # Text search
+    "grep", "egrep", "fgrep", "rg", "ag",
+    # Path / info
+    "pwd", "which", "whereis", "type", "basename", "dirname", "realpath",
+    "echo", "date", "whoami", "uname", "hostname", "uptime",
+    # Read-only process / system info
+    "ps", "pgrep", "lsof", "id", "groups", "env", "printenv",
+    # Git read-only operations
+    "git status", "git log", "git diff", "git show", "git branch",
+    "git tag", "git remote", "git rev-parse", "git ls-files",
+    "git blame", "git config --get",
+]
+
+
 def _plan_overrides() -> dict[str, Any]:
     plans_pattern = str(PLANS_DIR.path / "*")
     return {
-        # write_file and search_replace are mutating tools, so they trip the
-        # plan-mode dispatch gate. The gate respects this allowlist: when
-        # resolve_permission returns ALWAYS for the args (path matches
-        # plans_pattern), the gate bypasses the block. That's how the LLM
-        # can write the plan file the system reminder instructs it to write,
-        # while every other write path stays blocked.
+        # write_file / search_replace: mutating tools trip the plan-mode
+        # dispatch gate. Gate respects ALWAYS verdicts from resolve_permission
+        # for these tools, which the plans_pattern allowlist produces — so
+        # the LLM can author the plan file as the system reminder instructs.
+        # Other write paths stay blocked.
         #
-        # If you add a code path that calls a mutating tool outside the
-        # plan-mode dispatch gate (i.e. bypasses _execute_tool_call), the
-        # base permission stays "ask" to preserve safety even there.
+        # bash: same mechanism. Allowlist of read-only commands lets the LLM
+        # use `ls`, `find`, `grep`, `git log`, etc. for exploration while
+        # planning. Anything outside the list (including bash with no command,
+        # or compound commands containing a non-allowlisted part) is blocked.
         "tools": {
             "write_file": {"permission": "ask", "allowlist": [plans_pattern]},
             "search_replace": {"permission": "ask", "allowlist": [plans_pattern]},
+            "bash": {
+                "permission": "ask",
+                "allowlist": _PLAN_BASH_READ_ONLY_ALLOWLIST,
+            },
         },
         # Hide the entry tool while already in plan; ExitPlanMode is the way out.
         "base_disabled": ["enter_plan_mode"],
