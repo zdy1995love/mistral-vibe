@@ -39,9 +39,9 @@ def _build_preview(profile: AgentProfile, system_prompt: str | None) -> str:
     if system_prompt is None:
         body = "(system prompt not resolvable for this profile)"
     else:
-        lines = system_prompt.splitlines()[:_PREVIEW_LINES]
-        body = "\n".join(lines)
-        if len(system_prompt.splitlines()) > _PREVIEW_LINES:
+        all_lines = system_prompt.splitlines()
+        body = "\n".join(all_lines[:_PREVIEW_LINES])
+        if len(all_lines) > _PREVIEW_LINES:
             body += "\n…"
     return f"{header}\n\n{body}"
 
@@ -86,10 +86,13 @@ class AgentsPickerApp(Container):
             Option(_build_option_text(p, p.name == self._active_name), id=p.name)
             for p in self._profiles
         ]
+        initial = next(
+            (p for p in self._profiles if p.name == self._active_name),
+            self._profiles[0] if self._profiles else None,
+        )
         with Vertical(id="agentspicker-content"):
             yield NoMarkupStatic("Select Agent", classes="agentspicker-title")
             yield OptionList(*options, id="agentspicker-options")
-            initial = self._profiles[0] if self._profiles else None
             preview = (
                 _build_preview(initial, self._prompts.get(initial.name))
                 if initial is not None
