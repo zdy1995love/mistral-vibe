@@ -171,7 +171,12 @@ class TestAgentApplyToConfig:
 
         result = BUILTIN_AGENTS[BuiltinAgentName.DEFAULT].apply_to_config(base)
 
-        assert set(result.disabled_tools) == {"ask_user_question", "exit_plan_mode"}
+        # Non-PLAN profiles hide both plan-mode entry/exit tools from the LLM.
+        assert set(result.disabled_tools) == {
+            "ask_user_question",
+            "exit_plan_mode",
+            "enter_plan_mode",
+        }
 
     def test_profile_disabled_tools_preserve_user_disabled_tools(self) -> None:
         base = VibeConfig(
@@ -186,6 +191,7 @@ class TestAgentApplyToConfig:
             "ask_user_question",
             "custom_tool",
             "exit_plan_mode",
+            "enter_plan_mode",
         }
 
     def test_custom_prompt_found_in_global_when_missing_from_project(

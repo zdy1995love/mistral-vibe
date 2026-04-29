@@ -113,12 +113,23 @@ def _plan_overrides() -> dict[str, Any]:
     }
 
 
+# Hide both plan-mode tools from LLM tool list in non-PLAN profiles.
+# - exit_plan_mode is unusable outside PLAN (it errors).
+# - enter_plan_mode was usable but was observed to degrade tool-call
+#   reliability on some models (Mistral-Small-4 with vLLM, the model
+#   started narrating bash commands in markdown instead of calling them).
+#   Plan-mode entry stays available to users via the /plan slash command
+#   and shift+tab cycle; LLM-driven entry from non-PLAN profiles is
+#   removed as the cost outweighed the benefit.
+_NON_PLAN_BASE_DISABLED = ["exit_plan_mode", "enter_plan_mode"]
+
+
 DEFAULT = AgentProfile(
     BuiltinAgentName.DEFAULT,
     "Default",
     "Requires approval for tool executions",
     AgentSafety.NEUTRAL,
-    overrides={"base_disabled": ["exit_plan_mode"]},
+    overrides={"base_disabled": _NON_PLAN_BASE_DISABLED},
 )
 PLAN = AgentProfile(
     BuiltinAgentName.PLAN,
@@ -140,7 +151,7 @@ ACCEPT_EDITS = AgentProfile(
     "Auto-approves file edits only",
     AgentSafety.DESTRUCTIVE,
     overrides={
-        "base_disabled": ["exit_plan_mode"],
+        "base_disabled": _NON_PLAN_BASE_DISABLED,
         "tools": {
             "write_file": {"permission": "always"},
             "search_replace": {"permission": "always"},
@@ -152,7 +163,7 @@ AUTO_APPROVE = AgentProfile(
     "Auto Approve",
     "Auto-approves all tool executions",
     AgentSafety.YOLO,
-    overrides={"auto_approve": True, "base_disabled": ["exit_plan_mode"]},
+    overrides={"auto_approve": True, "base_disabled": _NON_PLAN_BASE_DISABLED},
 )
 
 EXPLORE = AgentProfile(
