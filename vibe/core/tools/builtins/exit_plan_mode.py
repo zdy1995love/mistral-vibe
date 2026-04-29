@@ -130,7 +130,13 @@ class ExitPlanMode(
 
         if result.cancelled or not result.answers:
             yield ExitPlanModeResult(
-                switched=False, message="User cancelled. Staying in plan mode."
+                switched=False,
+                message=(
+                    "User cancelled. Staying in plan mode. Continue refining "
+                    "the plan if you have changes to make; otherwise wait "
+                    "for the next user message before calling exit_plan_mode "
+                    "again."
+                ),
             )
             return
 
@@ -154,13 +160,25 @@ class ExitPlanMode(
         elif answer.is_other:
             yield ExitPlanModeResult(
                 switched=False,
-                message=f"Staying in plan mode. User feedback: {answer.answer}",
+                message=(
+                    f"Staying in plan mode. User feedback: {answer.answer}\n"
+                    f"ACTION REQUIRED: update the plan file ({ctx.plan_file_path}) "
+                    f"with the requested changes using write_file or "
+                    f"search_replace BEFORE calling exit_plan_mode again. "
+                    f"Calling exit_plan_mode without addressing the feedback "
+                    f"will produce the same plan and the same response."
+                ),
             )
             return
         else:
             yield ExitPlanModeResult(
                 switched=False,
-                message="Staying in plan mode. Continue refining the plan.",
+                message=(
+                    "Staying in plan mode. The user declined; continue "
+                    "refining the plan if you have ideas to address their "
+                    "concern, or wait for the next user message before "
+                    "calling exit_plan_mode again."
+                ),
             )
             return
 

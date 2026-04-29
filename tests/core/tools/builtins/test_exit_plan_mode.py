@@ -367,7 +367,14 @@ class TestNoFork:
         )
         result = await collect_result(tool.run(ExitPlanModeArgs(), ctx))
         assert result.switched is False
+        # Message must contain (a) the user's verbatim feedback and (b) an
+        # explicit instruction to update the plan file before retrying —
+        # without that, some models loop on exit_plan_mode without acting
+        # on the feedback.
         assert "Add error handling" in result.message
+        assert "ACTION REQUIRED" in result.message
+        assert "update the plan file" in result.message
+        assert str(plan_file) in result.message
         assert fork_cb.calls == []
 
 
