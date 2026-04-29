@@ -326,6 +326,45 @@ class TestForkToDev:
         assert new_plan_path != original_plan_path
 
     @pytest.mark.asyncio
+    async def test_plan_session_rotates_on_cancel_toggle_out(self) -> None:
+        """Bug regression: /plan toggle out of PLAN (cancel) must rotate
+        plan_session so a re-entry into PLAN gets a fresh {ts}-{slug}.md
+        path. Otherwise the second plan would overwrite the first.
+        """
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN
+        )
+        # Force lazy-evaluation of the plan path (simulates LLM having
+        # written or referenced the plan file during the first plan turn).
+        first_path = loop._plan_session.plan_file_path
+        first_session_obj = loop._plan_session
+
+        # Simulate /plan cancel: switch back to DEFAULT.
+        await loop.switch_agent(BuiltinAgentName.DEFAULT)
+
+        # plan_session must be a NEW instance with no cached path.
+        assert loop._plan_session is not first_session_obj
+        assert loop._plan_session._plan_file_path is None
+
+        # Re-enter PLAN, force evaluation, expect a different path.
+        await loop.switch_agent(BuiltinAgentName.PLAN)
+        second_path = loop._plan_session.plan_file_path
+        assert second_path != first_path
+
+    @pytest.mark.asyncio
+    async def test_plan_session_unchanged_when_not_leaving_plan(self) -> None:
+        """Switching between non-PLAN profiles (DEFAULT ↔ ACCEPT_EDITS)
+        must NOT rotate plan_session — only leaving PLAN does."""
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.DEFAULT
+        )
+        original_session = loop._plan_session
+        await loop.switch_agent(BuiltinAgentName.ACCEPT_EDITS)
+        assert loop._plan_session is original_session
+
+    @pytest.mark.asyncio
     async def test_fork_clears_pending_before_state_mutation(self) -> None:
         """Cancel-safety: pending_fork_to_dev is cleared up-front so a
         partial-fork doesn't leave the host's loop spinning."""

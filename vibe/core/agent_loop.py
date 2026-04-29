@@ -1394,17 +1394,15 @@ class AgentLoop:
     @requires_init
     async def fork_to_dev(self) -> str:
         """Execute the staged fork-to-dev: wipe history, switch profile,
-        rotate the plan session, return the seed user message that the
-        caller should pass to act().
+        return the seed user message that the caller should pass to act().
 
-        Order: clear_history → switch_agent → rotate plan_session → return seed.
+        Order: clear_history → switch_agent → return seed.
         - clear_history wipes messages (keeps system prompt at messages[0]),
           regenerates session_id, resets middleware/tools.
         - switch_agent rebuilds tool_manager/skill_manager/system prompt for
-          the destination profile.
-        - A fresh PlanSession is allocated so a subsequent /plan in the same
-          vibe-cli session writes to a new {ts}-{slug}.md instead of
-          overwriting the just-approved plan.
+          the destination profile, AND rotates plan_session via its
+          leaving-plan branch (so a future /plan in this vibe session won't
+          overwrite the just-approved plan file).
         - The seed is NOT injected — the caller passes it to act() so the
           new conversation starts with the LLM driving on the seed.
 
@@ -1424,8 +1422,6 @@ class AgentLoop:
 
         await self.clear_history()
         await self.switch_agent(target_profile)
-        # Fresh plan session: subsequent /plan entries get a new file path.
-        self._plan_session = PlanSession()
         return (
             f"Implement the following plan:\n\n{plan_text.strip()}\n\n"
             f"Plan file: {plan_path} (re-read at any time)."
@@ -1530,8 +1526,16 @@ class AgentLoop:
     async def switch_agent(self, agent_name: str) -> None:
         if agent_name == self.agent_profile.name:
             return
+        leaving_plan = self.agent_profile.name == BuiltinAgentName.PLAN
         self.agent_manager.switch_profile(agent_name)
         await self.reload_with_initial_messages(reset_middleware=False)
+        if leaving_plan:
+            # Rotate plan_session so re-entering PLAN later in the same vibe-cli
+            # session generates a new {ts}-{slug}.md path instead of reusing
+            # the previously-cached one (which would overwrite the prior
+            # plan file). Covers /plan cancel, shift+tab cycle out of PLAN,
+            # and ExitPlanMode fork (fork_to_dev calls switch_agent).
+            self._plan_session = PlanSession()
 
     @requires_init
     async def reload_with_initial_messages(
