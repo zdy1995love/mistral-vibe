@@ -43,10 +43,12 @@ class StyleManager:
     def _scan(self, directory: Path) -> dict[str, Path]:
         if not directory.is_dir():
             return {}
+        # Match .md case-insensitively so .MD / .Md files saved on
+        # case-insensitive filesystems (macOS APFS, Windows NTFS) are picked up.
         return {
             entry.stem: entry
             for entry in directory.iterdir()
-            if entry.is_file() and entry.suffix == ".md"
+            if entry.is_file() and entry.suffix.lower() == ".md"
         }
 
     def _merged(self) -> dict[str, StyleInfo]:
@@ -80,4 +82,8 @@ class StyleManager:
         info = self._merged().get(name)
         if info is None:
             raise StyleNotFoundError(name)
-        return info.path.read_text(encoding="utf-8").strip()
+        # utf-8-sig decodes plain UTF-8 unchanged AND transparently strips a
+        # leading BOM if one exists (common when files are saved by Notepad
+        # or some IDEs). Without this, a BOM survives `.strip()` and gets
+        # injected into the system prompt as a literal U+FEFF.
+        return info.path.read_text(encoding="utf-8-sig").strip()

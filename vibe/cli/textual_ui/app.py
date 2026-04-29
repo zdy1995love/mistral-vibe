@@ -1517,7 +1517,6 @@ class VibeApp(App):  # noqa: PLR0904
 
     async def _set_output_style(self, cmd_args: str = "", **kwargs: Any) -> None:
         from vibe.core.output_styles import StyleManager, StyleNotFoundError
-        from vibe.core.system_prompt import get_universal_system_prompt
 
         mgr = StyleManager()
         arg = cmd_args.strip()
@@ -1545,14 +1544,10 @@ class VibeApp(App):  # noqa: PLR0904
 
         VibeConfig.save_updates({"output_style": arg})
         self.agent_loop.refresh_config()
-
-        new_system_prompt = get_universal_system_prompt(
-            self.agent_loop.tool_manager,
-            self.config,
-            self.agent_loop.skill_manager,
-            self.agent_loop.agent_manager,
-        )
-        self.agent_loop.messages.update_system_prompt(new_system_prompt)
+        # Single canonical system-prompt rebuild path. Avoid inlining
+        # get_universal_system_prompt + messages.update_system_prompt — this
+        # helper centralizes both and respects @requires_init.
+        await self.agent_loop.refresh_system_prompt()
 
         await self._mount_and_scroll(
             UserCommandMessage(f"Output style is now `{arg}`.")
