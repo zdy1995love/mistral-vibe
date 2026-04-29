@@ -19,9 +19,9 @@ def resolve_edit_path(name: str, manager: AgentManager) -> Path:
     with no on-disk override yet, creates a starter override at
     `VIBE_HOME/agents/<name>.toml` and returns that path. Raises
     `AgentEditorError` if user-level writes are disabled (project-only
-    sources) or the agent is unknown and not a builtin.
+    sources), the agent is unknown, or the agent is custom but has no
+    on-disk TOML (which should be impossible if `manager` is consistent).
     """
-    profile = manager.get_agent(name)
     on_disk = _find_on_disk_toml(name, manager)
     if on_disk is not None:
         return on_disk
@@ -29,6 +29,10 @@ def resolve_edit_path(name: str, manager: AgentManager) -> Path:
         raise AgentEditorError(
             f"Agent '{name}' has no on-disk TOML and is not a builtin."
         )
+    try:
+        profile = manager.get_agent(name)
+    except ValueError as e:
+        raise AgentEditorError(str(e)) from e
     return _create_override_stub(profile)
 
 
