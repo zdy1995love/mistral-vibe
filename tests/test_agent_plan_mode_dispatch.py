@@ -206,3 +206,41 @@ class TestForkToDev:
         )
         with pytest.raises(Exception):  # AgentLoopError
             await loop.fork_to_dev()
+
+    @pytest.mark.asyncio
+    async def test_fork_rotates_plan_session(self) -> None:
+        """A second /plan after fork must write to a new file, not overwrite
+        the just-approved plan.
+        """
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN
+        )
+        original_plan_path = loop._plan_session.plan_file_path
+
+        loop.request_fork_to_dev(
+            "# Plan", original_plan_path, BuiltinAgentName.DEFAULT
+        )
+        await loop.fork_to_dev()
+
+        # Plan session should be a fresh instance with an unevaluated path.
+        assert loop._plan_session._plan_file_path is None
+        # First access of the new plan_session yields a different path.
+        new_plan_path = loop._plan_session.plan_file_path
+        assert new_plan_path != original_plan_path
+
+    @pytest.mark.asyncio
+    async def test_fork_clears_pending_before_state_mutation(self) -> None:
+        """Cancel-safety: pending_fork_to_dev is cleared up-front so a
+        partial-fork doesn't leave the host's loop spinning."""
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN
+        )
+        loop.request_fork_to_dev(
+            "# Plan", Path("/tmp/p.md"), BuiltinAgentName.DEFAULT
+        )
+        assert loop.pending_fork_to_dev is not None
+        await loop.fork_to_dev()
+        # After (or even mid-) fork, pending must be cleared.
+        assert loop.pending_fork_to_dev is None

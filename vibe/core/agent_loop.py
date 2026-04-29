@@ -1353,23 +1353,38 @@ class AgentLoop:
     @requires_init
     async def fork_to_dev(self) -> str:
         """Execute the staged fork-to-dev: wipe history, switch profile,
-        return the seed user message that the caller should pass to act().
+        rotate the plan session, return the seed user message that the
+        caller should pass to act().
 
-        Order: clear_history → switch_agent → return seed.
+        Order: clear_history → switch_agent → rotate plan_session → return seed.
         - clear_history wipes messages (keeps system prompt at messages[0]),
           regenerates session_id, resets middleware/tools.
         - switch_agent rebuilds tool_manager/skill_manager/system prompt for
           the destination profile.
+        - A fresh PlanSession is allocated so a subsequent /plan in the same
+          vibe-cli session writes to a new {ts}-{slug}.md instead of
+          overwriting the just-approved plan.
         - The seed is NOT injected — the caller passes it to act() so the
           new conversation starts with the LLM driving on the seed.
+
+        Cancel-safety: pending_fork_to_dev is cleared up-front, so a
+        partial-fork (e.g., clear_history succeeded but switch_agent was
+        cancelled) does not leave the loop check looping forever. The
+        agent_loop may end up in a half-state (e.g. PLAN profile with
+        cleared history); the next user input recovers naturally — they
+        can /plan to leave or just continue with empty history.
         """
         if self._pending_fork_to_dev is None:
             raise AgentLoopError("No pending fork-to-dev to execute.")
         plan_text, plan_path, target_profile = self._pending_fork_to_dev
+        # Clear the pending state first so a cancellation mid-fork doesn't
+        # leave the host's loop spinning on an unprocessable fork.
         self._pending_fork_to_dev = None
 
         await self.clear_history()
         await self.switch_agent(target_profile)
+        # Fresh plan session: subsequent /plan entries get a new file path.
+        self._plan_session = PlanSession()
         return (
             f"Implement the following plan:\n\n{plan_text.strip()}\n\n"
             f"Plan file: {plan_path} (re-read at any time)."
