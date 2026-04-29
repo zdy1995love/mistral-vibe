@@ -364,6 +364,7 @@ Custom agents are TOML files in `~/.vibe/agents/NAME.toml`.
 ## Built-in Slash Commands
 
 - `/help` - Show help message
+- `/agents` - List, preview, and edit available agents (custom TOML or builtin override)
 - `/config` - Edit config settings
 - `/model` - Select active model
 - `/thinking` - Select thinking level

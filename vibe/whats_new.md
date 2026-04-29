@@ -1,3 +1,8 @@
+# What's new in this fork
+
+- **`/agents` slash command**: List, preview, and edit agent profiles (builtin or custom TOML)
+- **Builtin skills system**: Added self-awareness skill for enhanced functionality
+
 # What's new in v2.9.1
 
 - **Default model**: Migrated to `mistral-medium-3.5`.
