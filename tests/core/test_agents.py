@@ -139,12 +139,14 @@ class TestAgentManager:
             include_project_context=False,
             include_prompt_detail=False,
         )
-        manager = AgentManager(lambda: config)
+        manager = AgentManager(lambda: config, initial_agent="edited")
         assert manager.available_agents["edited"].description == "Old description"
+        assert manager.active_profile.description == "Old description"
 
         toml_path.write_text("description = 'New description'\n")
         manager.reload_from_disk()
         assert manager.available_agents["edited"].description == "New description"
+        assert manager.active_profile.description == "New description"
 
     def test_reload_from_disk_falls_back_to_default_when_active_deleted(
         self, tmp_path: Path
@@ -164,3 +166,41 @@ class TestAgentManager:
         toml_path.unlink()
         manager.reload_from_disk()
         assert manager.active_profile.name == "default"
+
+    def test_reload_from_disk_preserves_runtime_registered_agents(
+        self, tmp_path: Path
+    ) -> None:
+        from vibe.core.agents.models import CHAT as CHAT_AGENT
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        config = build_test_vibe_config(
+            agent_paths=[agents_dir],
+            include_project_context=False,
+            include_prompt_detail=False,
+        )
+        manager = AgentManager(lambda: config)
+        manager.register_agent(CHAT_AGENT)
+        assert "chat" in manager.available_agents
+
+        manager.reload_from_disk()
+        assert "chat" in manager.available_agents
+        assert manager.available_agents["chat"] is CHAT_AGENT
+
+    def test_reload_from_disk_skips_unparseable_toml(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "good.toml").write_text(
+            "description = 'Good'\nsafety = 'neutral'\n"
+        )
+        (agents_dir / "broken.toml").write_text("this is = not valid toml [[[\n")
+        config = build_test_vibe_config(
+            agent_paths=[agents_dir],
+            include_project_context=False,
+            include_prompt_detail=False,
+        )
+        manager = AgentManager(lambda: config)
+        manager.reload_from_disk()
+
+        assert "good" in manager.available_agents
+        assert "broken" not in manager.available_agents
