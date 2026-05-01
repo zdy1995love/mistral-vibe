@@ -8,6 +8,7 @@ from enum import StrEnum, auto
 from functools import wraps
 from http import HTTPStatus
 import inspect
+import json
 import os
 from pathlib import Path
 import threading
@@ -182,6 +183,45 @@ def _is_context_too_long_error(e: Exception) -> bool:
     if isinstance(e, RuntimeError) and isinstance(e.__cause__, BackendError):
         return e.__cause__.is_context_too_long
     return False
+
+
+def _sanitize_tool_call_arguments(message: LLMMessage) -> LLMMessage:
+    """Replace unparseable tool_call.arguments with empty-object JSON.
+
+    A streamed tool call can be truncated mid-arguments — for instance
+    when the model hits max_tokens or the network drops between arg
+    deltas. The chunk_agg merge in `_chat_streaming` happily concatenates
+    whatever fragments arrived, so the persisted assistant message ends
+    up with arguments like `{"command": "ls -la /home/zdy/zeroclaw`
+    (no closing quote / brace). Sending that message back to vLLM on
+    the next turn triggers a 400 with `Unterminated string starting at:
+    line 1 column 13` because vLLM strictly validates each tool_call's
+    arguments as standalone JSON before the chat endpoint runs.
+
+    This helper round-trips arguments through `json.loads`. Anything
+    that doesn't parse is rewritten to `{}` — preserving the tool name
+    and call id (so downstream tool dispatch still surfaces a clear
+    BashArgs/etc. validation error to the model) while ensuring the
+    next request body is well-formed.
+    """
+    tool_calls = message.tool_calls
+    if not tool_calls:
+        return message
+    new_tool_calls = list(tool_calls)
+    fixed = False
+    for i, tc in enumerate(tool_calls):
+        args_str = tc.function.arguments
+        if args_str is None:
+            continue
+        try:
+            json.loads(args_str)
+        except (json.JSONDecodeError, TypeError):
+            fixed = True
+            new_function = tc.function.model_copy(update={"arguments": "{}"})
+            new_tool_calls[i] = tc.model_copy(update={"function": new_function})
+    if not fixed:
+        return message
+    return message.model_copy(update={"tool_calls": new_tool_calls})
 
 
 def requires_init(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1265,6 +1305,7 @@ class AgentLoop:
             processed_message = self.format_handler.process_api_response_message(
                 result.message
             )
+            processed_message = _sanitize_tool_call_arguments(processed_message)
             self.messages.append(processed_message)
             return LLMChunk(message=processed_message, usage=result.usage)
 
@@ -1341,7 +1382,7 @@ class AgentLoop:
                 )
             self._update_stats(usage=usage, time_seconds=end_time - start_time)
 
-            self.messages.append(chunk_agg.message)
+            self.messages.append(_sanitize_tool_call_arguments(chunk_agg.message))
 
         except Exception as e:
             if _should_raise_rate_limit_error(e):
