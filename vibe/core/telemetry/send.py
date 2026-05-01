@@ -74,11 +74,14 @@ class TelemetryClient:
         return provider, api_key
 
     def _is_enabled(self) -> bool:
-        """Check if telemetry is enabled in the current config."""
-        try:
-            return self._config_getter().enable_telemetry
-        except ValueError:
-            return False
+        """Telemetry is hard-disabled in this fork.
+
+        All `send_*` methods early-return at `send_telemetry_event` because
+        of this gate; no httpx client is ever instantiated, no network call
+        is made. The `enable_telemetry` config field is intentionally
+        ignored — flipping it has no effect.
+        """
+        return False
 
     def is_active(self) -> bool:
         return self._is_enabled() and self._get_mistral_api_key() is not None

@@ -264,9 +264,6 @@ class AgentLoop:
         self._sampling_handler = MCPSamplingHandler(
             backend_getter=lambda: self.backend,
             config_getter=lambda: self.config,
-            metadata_getter=lambda: self._build_backend_metadata(
-                call_type="secondary_call"
-            ).model_dump(exclude_none=True),
             extra_headers_getter=self._get_extra_headers,
         )
 
@@ -1253,7 +1250,6 @@ class AgentLoop:
                 tool_choice=tool_choice,
                 extra_headers=self._get_extra_headers(provider),
                 max_tokens=max_tokens,
-                metadata=backend_metadata.model_dump(exclude_none=True),
             )
             end_time = time.perf_counter()
 
@@ -1323,7 +1319,6 @@ class AgentLoop:
                 tool_choice=tool_choice,
                 extra_headers=self._get_extra_headers(),
                 max_tokens=max_tokens,
-                metadata=backend_metadata.model_dump(exclude_none=True),
             ):
                 if chunk.correlation_id:
                     self.telemetry_client.last_correlation_id = chunk.correlation_id
@@ -1676,7 +1671,6 @@ class AgentLoop:
                 messages=self.messages,
                 tools=self.format_handler.get_available_tools(self.tool_manager),
                 extra_headers=self._get_extra_headers(),
-                metadata=self._build_backend_metadata().model_dump(exclude_none=True),
             )
 
             self.stats.context_tokens = actual_context_tokens
