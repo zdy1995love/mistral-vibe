@@ -119,72 +119,21 @@ async def test_updates_tokens_stats_based_on_backend_response_streaming(
 
 
 @pytest.mark.asyncio
-async def test_passes_session_id_to_backend(vibe_config: VibeConfig):
+async def test_no_metadata_passed_to_backend(vibe_config: VibeConfig):
+    """Hard-disable invariant: this fork strips the `metadata=` kwarg from
+    every backend.complete / complete_streaming / count_tokens call. The
+    upstream tests for session_id / parent_session_id / entrypoint_metadata
+    routing through the request body are gone with the kwarg.
+    """
     backend = FakeBackend([mock_llm_chunk(content="Response")])
     agent = build_test_agent_loop(config=vibe_config, backend=backend)
 
     [_ async for _ in agent.act("Hello")]
 
-    assert len(backend.requests_metadata) > 0
-    meta = backend.requests_metadata[0]
-    assert meta is not None
-    assert meta["session_id"] == agent.session_id
-    assert "parent_session_id" not in meta
-    assert "message_id" in meta
-    assert meta["call_type"] == "main_call"
-    assert meta["call_source"] == "vibe_code"
-
-
-@pytest.mark.asyncio
-async def test_passes_parent_session_id_to_backend_after_reset(vibe_config: VibeConfig):
-    backend = FakeBackend([
-        [mock_llm_chunk(content="Response")],
-        [mock_llm_chunk(content="Response after reset")],
-    ])
-    agent = build_test_agent_loop(config=vibe_config, backend=backend)
-
-    [_ async for _ in agent.act("Hello")]
-    first_session_id = agent.session_id
-
-    agent._reset_session()
-    [_ async for _ in agent.act("Hello again")]
-
-    assert len(backend.requests_metadata) >= 2
-    reset_meta = backend.requests_metadata[1]
-    assert reset_meta is not None
-    assert reset_meta["session_id"] == agent.session_id
-    assert reset_meta["parent_session_id"] == first_session_id
-
-
-@pytest.mark.asyncio
-async def test_passes_entrypoint_metadata_to_backend(vibe_config: VibeConfig):
-    metadata = EntrypointMetadata(
-        agent_entrypoint="acp",
-        agent_version="2.0.0",
-        client_name="vibe_ide",
-        client_version="0.5.0",
-    )
-    backend = FakeBackend([mock_llm_chunk(content="Response")])
-    agent = build_test_agent_loop(
-        config=vibe_config,
-        backend=backend,
-        enable_streaming=True,
-        entrypoint_metadata=metadata,
-    )
-
-    [_ async for _ in agent.act("Hello")]
-
-    assert len(backend.requests_metadata) > 0
-    meta = backend.requests_metadata[0]
-    assert meta is not None
-    assert meta["agent_entrypoint"] == "acp"
-    assert meta["agent_version"] == "2.0.0"
-    assert meta["client_name"] == "vibe_ide"
-    assert meta["client_version"] == "0.5.0"
-    assert meta["session_id"] == agent.session_id
-    assert "message_id" in meta
-    assert meta["call_type"] == "main_call"
-    assert meta["call_source"] == "vibe_code"
+    # Either the FakeBackend never received a metadata kwarg, or it was
+    # explicitly None — both are acceptable. The invariant we enforce is
+    # "no telemetry metadata reaches the wire".
+    assert all(m is None for m in backend.requests_metadata)
 
 
 @pytest.mark.asyncio
@@ -237,13 +186,11 @@ async def test_mcp_sampling_handler_uses_updated_config_when_agent_config_change
 
 
 @pytest.mark.asyncio
-async def test_mcp_sampling_handler_sends_secondary_call_telemetry_metadata():
-    metadata = EntrypointMetadata(
-        agent_entrypoint="acp",
-        agent_version="2.0.0",
-        client_name="vibe_ide",
-        client_version="0.5.0",
-    )
+async def test_mcp_sampling_handler_propagates_x_affinity_header():
+    """Sampling-via-MCP path: x-affinity routing header is preserved on the
+    secondary backend call. The metadata kwarg is intentionally absent in
+    this fork (telemetry stripped); we only assert the routing header.
+    """
     backend = FakeBackend([
         [mock_llm_chunk(content="Response")],
         [mock_llm_chunk(content="Sampled response")],
@@ -251,31 +198,14 @@ async def test_mcp_sampling_handler_sends_secondary_call_telemetry_metadata():
     agent = build_test_agent_loop(
         config=_two_model_vibe_config("devstral-latest"),
         backend=backend,
-        entrypoint_metadata=metadata,
     )
 
     [_ async for _ in agent.act("Hello")]
 
-    agent.parent_session_id = "parent-session-456"
-
     result = await agent._sampling_handler(MagicMock(), _make_sampling_params())
 
     assert isinstance(result, CreateMessageResult)
-    assert len(backend.requests_metadata) == 2
-    sampling_metadata = backend.requests_metadata[1]
-    assert sampling_metadata is not None
-    assert sampling_metadata["agent_entrypoint"] == "acp"
-    assert sampling_metadata["agent_version"] == "2.0.0"
-    assert sampling_metadata["client_name"] == "vibe_ide"
-    assert sampling_metadata["client_version"] == "0.5.0"
-    assert sampling_metadata["session_id"] == agent.session_id
-    assert sampling_metadata["parent_session_id"] == "parent-session-456"
-    assert sampling_metadata["message_id"] == next(
-        message.message_id for message in agent.messages if message.role == Role.user
-    )
-    assert sampling_metadata["call_type"] == "secondary_call"
-    assert sampling_metadata["call_source"] == "vibe_code"
-
+    assert all(m is None for m in backend.requests_metadata)
     assert len(backend.requests_extra_headers) == 2
     sampling_headers = backend.requests_extra_headers[1]
     assert sampling_headers is not None
@@ -296,47 +226,12 @@ def _generic_provider_vibe_config() -> VibeConfig:
 
 
 @pytest.mark.asyncio
-async def test_mistral_metadata_header_call_type_per_turn() -> None:
-    """First LLM call in a turn is main_call; second call (after tools) is secondary_call."""
-    tool_call = ToolCall(
-        id="call_1",
-        index=0,
-        function=FunctionCall(name="todo", arguments='{"action": "read"}'),
-    )
-    backend = FakeBackend([
-        [mock_llm_chunk(content="Checking todos.", tool_calls=[tool_call])],
-        [mock_llm_chunk(content="Here are your todos.")],
-    ])
-    config = build_test_vibe_config(
-        providers=[
-            ProviderConfig(
-                name="mistral",
-                api_base="https://api.mistral.ai/v1",
-                api_key_env_var="MISTRAL_API_KEY",
-                backend=Backend.MISTRAL,
-            )
-        ],
-        enabled_tools=["todo"],
-        tools={"todo": BaseToolConfig(permission=ToolPermission.ALWAYS)},
-    )
-    agent = build_test_agent_loop(
-        config=config, backend=backend, agent_name=BuiltinAgentName.AUTO_APPROVE
-    )
-
-    [_ async for _ in agent.act("What's on my todo list?")]
-
-    assert len(backend.requests_metadata) == 2
-    first_metadata = backend.requests_metadata[0]
-    second_metadata = backend.requests_metadata[1]
-    assert first_metadata is not None
-    assert second_metadata is not None
-    assert first_metadata["call_type"] == "main_call"
-    assert second_metadata["call_type"] == "secondary_call"
-
-
-@pytest.mark.asyncio
-async def test_auto_compact_emits_summary_recount_and_next_turn_metadata() -> None:
-    """Compact emits summary, token-count, then user-turn backend metadata in order."""
+async def test_auto_compact_propagates_x_affinity_per_call() -> None:
+    """Compact triggers three backend calls (summary, recount, user turn).
+    The first uses the pre-reset session_id for x-affinity routing; the
+    next two use the post-reset session_id. metadata= is not asserted
+    (telemetry stripped in this fork).
+    """
     backend = FakeBackend([
         [mock_llm_chunk(content="<summary>")],
         [mock_llm_chunk(content="<final>")],
@@ -358,24 +253,7 @@ async def test_auto_compact_emits_summary_recount_and_next_turn_metadata() -> No
 
     [_ async for _ in agent.act("Hello")]
 
-    assert len(backend.requests_metadata) == 3
     assert len(backend.requests_extra_headers) == 3
-    compact_metadata = backend.requests_metadata[0]
-    recount_metadata = backend.requests_metadata[1]
-    user_turn_metadata = backend.requests_metadata[2]
-    assert compact_metadata is not None
-    assert recount_metadata is not None
-    assert user_turn_metadata is not None
-    assert compact_metadata["call_type"] == "secondary_call"
-    assert compact_metadata["session_id"] == original_session_id
-    assert "parent_session_id" not in compact_metadata
-    assert recount_metadata["call_type"] == "secondary_call"
-    assert recount_metadata["session_id"] == agent.session_id
-    assert recount_metadata["parent_session_id"] == original_session_id
-    assert user_turn_metadata["call_type"] == "main_call"
-    assert user_turn_metadata["session_id"] == agent.session_id
-    assert user_turn_metadata["parent_session_id"] == original_session_id
-
     compact_headers = backend.requests_extra_headers[0]
     recount_headers = backend.requests_extra_headers[1]
     user_turn_headers = backend.requests_extra_headers[2]

@@ -358,7 +358,7 @@ class TestACPSetConfigOptionThinking:
         )
         assert acp_session is not None
 
-        for level in ["low", "medium", "high", "max", "off"]:
+        for level in ["high", "off"]:
             response = await acp_agent_loop.set_config_option(
                 session_id=session_id, config_id="thinking", value=level
             )

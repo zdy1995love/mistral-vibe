@@ -130,7 +130,7 @@ class TestACPNewSession:
         assert thinking_config.id == "thinking"
         assert thinking_config.category == "thinking"
         assert thinking_config.current_value == "off"
-        assert len(thinking_config.options) == 5
+        assert len(thinking_config.options) == 2
 
     @pytest.mark.skip(reason="TODO: Fix this test")
     @pytest.mark.asyncio

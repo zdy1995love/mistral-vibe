@@ -127,7 +127,6 @@ def test_headless_section_absent_by_default() -> None:
 
 def _build_prompt(output_style: str) -> str:
     config = build_test_vibe_config(
-        system_prompt_id="tests",
         include_project_context=False,
         include_prompt_detail=False,
         include_model_info=False,
