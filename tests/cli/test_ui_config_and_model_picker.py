@@ -333,25 +333,6 @@ async def test_thinking_picker_escape_returns_to_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thinking_picker_select_level() -> None:
-    app = build_test_vibe_app(config=_make_config_with_models())
-    async with app.run_test() as pilot:
-        await pilot.pause(0.1)
-        await app._show_thinking()
-        await pilot.pause(0.2)
-
-        # Navigate down to "low" (second item) and select
-        await pilot.press("down")
-        with patch.object(app, "_reload_config", new=AsyncMock()):
-            await pilot.press("enter")
-            await pilot.pause(0.2)
-
-        assert app._current_bottom_app == BottomApp.Input
-        assert len(app.query(ThinkingPickerApp)) == 0
-        assert app.config.get_active_model().thinking == "low"
-
-
-@pytest.mark.asyncio
 async def test_thinking_picker_select_high() -> None:
     app = build_test_vibe_app(config=_make_config_with_models())
     async with app.run_test() as pilot:
@@ -359,14 +340,14 @@ async def test_thinking_picker_select_high() -> None:
         await app._show_thinking()
         await pilot.pause(0.2)
 
-        # Navigate to "high" (4th item = 3 downs from "off")
-        await pilot.press("down")
-        await pilot.press("down")
+        # Two-level scale: one "down" press from "off" lands on "high".
         await pilot.press("down")
         with patch.object(app, "_reload_config", new=AsyncMock()):
             await pilot.press("enter")
             await pilot.pause(0.2)
 
+        assert app._current_bottom_app == BottomApp.Input
+        assert len(app.query(ThinkingPickerApp)) == 0
         assert app.config.get_active_model().thinking == "high"
 
 
@@ -426,12 +407,11 @@ async def test_config_to_thinking_picker_select_returns_to_input() -> None:
         await pilot.press("enter")
         await pilot.pause(0.3)
 
-        # Select "medium" (3rd item = 2 downs from "off")
-        await pilot.press("down")
+        # Two-level scale: one "down" press from "off" lands on "high".
         await pilot.press("down")
         with patch.object(app, "_reload_config", new=AsyncMock()):
             await pilot.press("enter")
             await pilot.pause(0.2)
 
         assert app._current_bottom_app == BottomApp.Input
-        assert app.config.get_active_model().thinking == "medium"
+        assert app.config.get_active_model().thinking == "high"

@@ -79,12 +79,12 @@ class TestBannerInitialState:
         mcp_registry.count_loaded.return_value = 0
 
         banner = Banner(
-            config=_make_mock_config(thinking="max"),
+            config=_make_mock_config(thinking="high"),
             skill_manager=skill_manager,
             mcp_registry=mcp_registry,
         )
 
-        assert banner._initial_state.active_model == "test-model[max]"
+        assert banner._initial_state.active_model == "test-model[high]"
 
     def test_format_meta_counts_includes_connectors(self) -> None:
         skill_manager = Mock(spec=SkillManager)
