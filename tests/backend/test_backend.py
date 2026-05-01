@@ -547,15 +547,13 @@ class TestMistralBackendReasoningEffort:
         ("thinking", "expected_effort", "expected_temperature"),
         [
             ("off", None, 0.2),
-            ("low", "none", 1.0),
-            ("medium", "high", 1.0),
             ("high", "high", 1.0),
         ],
     )
     async def test_complete_passes_reasoning_effort(
         self,
         backend: MistralBackend,
-        thinking: Literal["off", "low", "medium", "high"],
+        thinking: Literal["off", "high"],
         expected_effort: str | None,
         expected_temperature: float,
     ) -> None:

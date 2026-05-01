@@ -357,8 +357,22 @@ def _default_alias_to_name(data: Any) -> Any:
     return data
 
 
-ThinkingLevel = Literal["off", "low", "medium", "high", "max"]
+# Narrowed from upstream's 5-level scale (off/low/medium/high/max) to a
+# binary toggle. The fork only targets local vLLM, where the OpenAI
+# `reasoning_effort` request param is either omitted ("off") or set to
+# "high". Add intermediate levels back here if a use case emerges; the
+# picker, set_thinking, and the OpenAIAdapter mapping all derive their
+# behavior from this Literal.
+ThinkingLevel = Literal["off", "high"]
 THINKING_LEVELS: list[str] = list(get_args(ThinkingLevel))
+
+# Temperature companion values applied by set_thinking when the level
+# changes. "high" pushes temperature up to encourage exploratory
+# reasoning; "off" pulls it down to keep deterministic outputs.
+_THINKING_TEMPERATURE: dict[str, float] = {
+    "high": 0.7,
+    "off": 0.3,
+}
 
 
 class ModelConfig(BaseModel):
@@ -369,7 +383,6 @@ class ModelConfig(BaseModel):
     input_price: float = 0.0  # Price per million input tokens
     output_price: float = 0.0  # Price per million output tokens
     thinking: ThinkingLevel = "off"
-    reasoning_effort: Literal["none", "high"] | None = None
     auto_compact_threshold: int = 200_000
 
     _default_alias_to_name = model_validator(mode="before")(_default_alias_to_name)
@@ -916,11 +929,20 @@ class VibeConfig(BaseSettings):
         return self
 
     def set_thinking(self, level: ThinkingLevel) -> None:
+        # Temperature linking: bumping thinking on/off shifts the active
+        # model's temperature in lockstep (high → 0.7, off → 0.3). Carried
+        # over from the dev-side `/reasoning` toggle so the picker has the
+        # same effect — high temperature surfaces more exploratory chains
+        # of thought, low temperature keeps direct answers deterministic.
+        temperature = _THINKING_TEMPERATURE[level]
+
         model = self.get_active_model()
 
         for i, m in enumerate(self.models):
             if m.alias == model.alias:
-                self.models[i] = m.model_copy(update={"thinking": level})
+                self.models[i] = m.model_copy(
+                    update={"thinking": level, "temperature": temperature}
+                )
                 break
 
         current_config = TomlFileSettingsSource(type(self)).toml_data
@@ -928,6 +950,7 @@ class VibeConfig(BaseSettings):
         for entry in models:
             if entry.get("alias", entry.get("name")) == model.alias:
                 entry["thinking"] = level
+                entry["temperature"] = temperature
                 break
         else:
             # Model comes from defaults; materialize the full list so we
@@ -938,6 +961,9 @@ class VibeConfig(BaseSettings):
                     "name": m.name,
                     "provider": m.provider,
                     "thinking": level if m.alias == model.alias else m.thinking,
+                    "temperature": (
+                        temperature if m.alias == model.alias else m.temperature
+                    ),
                 }
                 for m in self.models
             ]

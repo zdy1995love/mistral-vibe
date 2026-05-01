@@ -119,7 +119,7 @@ alias = "mistral-medium-3.5"
 temperature = 1.0
 input_price = 1.5
 output_price = 7.5
-thinking = "high"                 # "off", "low", "medium", "high", "max"
+thinking = "high"                 # "off" or "high" (binary toggle in this fork)
 auto_compact_threshold = 200000   # Per-model override of the top-level value
 
 [[models]]
@@ -374,7 +374,6 @@ Custom agents are TOML files in `~/.vibe/agents/NAME.toml`.
 - `/compact` - Full compact: summarize entire history into a single message
 - `/compact --micro` - Micro-compact: clear old tool results only, preserving conversation structure
 - `/plan` - Toggle plan mode: read-only discussion that blocks write/exec tools
-- `/reasoning` (or `/effort`) - Toggle reasoning for the active model; pass `on` / `off` to set explicitly
 - `/style` - List or switch output style (`default` / `concise` / `learner` / user-defined). Custom styles live in `~/.vibe/prompts/styles/NAME.md`
 - `/status` - Display agent statistics
 - `/voice` - Configure voice settings

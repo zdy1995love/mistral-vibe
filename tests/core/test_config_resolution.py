@@ -41,7 +41,7 @@ class _ModelConfigOverrides(TypedDict, total=False):
     temperature: float
     input_price: float
     output_price: float
-    thinking: Literal["off", "low", "medium", "high"]
+    thinking: Literal["off", "high"]
     auto_compact_threshold: int
 
 
@@ -232,12 +232,12 @@ class TestSetThinking:
             tomli_w.dump(data, f)
 
         cfg = VibeConfig.load()
-        cfg.set_thinking("max")
+        cfg.set_thinking("high")
 
         with config_file.open("rb") as f:
             result = tomllib.load(f)
         assert result["models"][0].get("thinking") is None
-        assert result["models"][1]["thinking"] == "max"
+        assert result["models"][1]["thinking"] == "high"
 
 
 class TestMigrateLeavesFindInBashAllowlist:
@@ -426,7 +426,7 @@ class TestMigrateMistralVibeCliLatestDefaults:
                     "provider": "mistral",
                     "alias": "devstral-2-clone",
                     "temperature": 0.5,
-                    "thinking": "low",
+                    "thinking": "high",
                 },
             ]
         }
@@ -441,7 +441,7 @@ class TestMigrateMistralVibeCliLatestDefaults:
             result = tomllib.load(f)
         assert result["models"][1]["alias"] == "devstral-2-clone"
         assert result["models"][1]["temperature"] == 0.5
-        assert result["models"][1]["thinking"] == "low"
+        assert result["models"][1]["thinking"] == "high"
 
     def test_noop_when_no_models_section(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

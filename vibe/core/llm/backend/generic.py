@@ -370,7 +370,7 @@ class GenericBackend:
             provider=self._provider,
             api_key=api_key,
             thinking=model.thinking,
-            reasoning_effort=model.reasoning_effort,
+            reasoning_effort=model.thinking if model.thinking != "off" else None,
         )
 
         headers = req.headers
@@ -442,7 +442,7 @@ class GenericBackend:
             provider=self._provider,
             api_key=api_key,
             thinking=model.thinking,
-            reasoning_effort=model.reasoning_effort,
+            reasoning_effort=model.thinking if model.thinking != "off" else None,
         )
 
         headers = req.headers

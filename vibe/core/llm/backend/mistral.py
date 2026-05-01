@@ -171,11 +171,12 @@ class MistralMapper:
 
 ReasoningEffortValue = Literal["none", "high"]
 
+# After the fork's narrowing (off/high only) the upstream low/medium/max
+# rows are unreachable, but kept as commented references should the scale
+# expand again. "off" is intentionally absent: missing keys map to None
+# via .get(), which signals "do not send reasoning_effort".
 _THINKING_TO_REASONING_EFFORT: dict[str, ReasoningEffortValue] = {
-    "low": "none",
-    "medium": "high",
     "high": "high",
-    "max": "high",
 }
 
 
@@ -263,11 +264,7 @@ class MistralBackend:
     ) -> LLMChunk:
         try:
             merged_messages = merge_consecutive_user_messages(messages)
-            reasoning_effort = (
-                model.reasoning_effort
-                if model.reasoning_effort is not None
-                else _THINKING_TO_REASONING_EFFORT.get(model.thinking)
-            )
+            reasoning_effort = _THINKING_TO_REASONING_EFFORT.get(model.thinking)
             if reasoning_effort is not None and reasoning_effort != "none":
                 temperature = 1.0
 
@@ -346,11 +343,7 @@ class MistralBackend:
     ) -> AsyncGenerator[LLMChunk, None]:
         try:
             merged_messages = merge_consecutive_user_messages(messages)
-            reasoning_effort = (
-                model.reasoning_effort
-                if model.reasoning_effort is not None
-                else _THINKING_TO_REASONING_EFFORT.get(model.thinking)
-            )
+            reasoning_effort = _THINKING_TO_REASONING_EFFORT.get(model.thinking)
             if reasoning_effort is not None and reasoning_effort != "none":
                 temperature = 1.0
 

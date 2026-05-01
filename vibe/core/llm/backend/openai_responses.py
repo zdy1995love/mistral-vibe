@@ -538,7 +538,9 @@ class OpenAIResponsesAdapter(APIAdapter):
         provider: ProviderConfig,
         api_key: str | None = None,
         thinking: str = "off",
+        reasoning_effort: str | None = None,
     ) -> PreparedRequest:
+        del reasoning_effort  # Responses API maps thinking → reasoning.effort internally
         merged_messages = merge_consecutive_user_messages(messages)
         input_items = self._convert_messages(merged_messages)
 
