@@ -24,11 +24,17 @@ class FakeStream:
 class MessageTestDouble(StreamingMessageBase):
     """Minimal test double for StreamingMessageBase that bypasses Textual internals."""
 
+    # Disable the streaming throttle for unit-level tests — they assert
+    # the underlying direct-write/buffer semantics, not the timing
+    # coalescing applied at the live UI layer.
+    _flush_interval_s = 0.0
+
     def __init__(self, at_bottom: bool = True, should_write: bool = True) -> None:
         # Initialise only the fields used by the buffer logic — no Textual setup.
         self._content = ""
         self._content_initialized = False
         self._to_write_buffer = ""
+        self._last_flush_monotonic = 0.0
         self._stream = None
         self._markdown = None
         self._at_bottom = at_bottom
@@ -317,3 +323,61 @@ class TestNoDoubleWrite:
         await msg.write_initial_content()
 
         assert msg._fake_stream.all_written == "once"
+
+
+class TestFlushThrottle:
+    """The Markdown.append re-parse cost in Textual 8.x grows with the
+    response length, so streaming chunks at sub-frame intervals must be
+    coalesced into a single flush. The throttle is gated by a class-level
+    `_flush_interval_s`; setting it >0 in a subclass enables coalescing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_throttle_buffers_burst_until_interval_passes(self) -> None:
+        # Drive the throttle deterministically: fixed wall clock = 100s, so
+        # neither chunk crosses the 50ms threshold.
+        import vibe.cli.textual_ui.widgets.messages as messages_mod
+
+        msg = make_msg(at_bottom=True)
+        msg._flush_interval_s = 0.05  # 50ms throttle window
+        msg._last_flush_monotonic = 100.0
+
+        original_monotonic = messages_mod.time.monotonic
+        messages_mod.time.monotonic = lambda: 100.0  # type: ignore[assignment]
+        try:
+            await msg.append_content("a")
+            await msg.append_content("b")
+            await msg.append_content("c")
+        finally:
+            messages_mod.time.monotonic = original_monotonic
+
+        # All three writes elapsed under the throttle window — buffer holds
+        # everything, fake stream got no writes yet.
+        assert msg._fake_stream.all_written == ""
+        assert msg._to_write_buffer == "abc"
+
+        # stop_stream must always flush the residual.
+        await msg.stop_stream()
+        assert msg._fake_stream.all_written == "abc"
+
+    @pytest.mark.asyncio
+    async def test_throttle_flushes_when_interval_elapsed(self) -> None:
+        import vibe.cli.textual_ui.widgets.messages as messages_mod
+
+        msg = make_msg(at_bottom=True)
+        msg._flush_interval_s = 0.05
+
+        # First append at t=100, second at t=100.2 (200ms > 50ms) — second
+        # call must flush both buffered content and the new chunk.
+        clock = {"t": 100.0}
+        original_monotonic = messages_mod.time.monotonic
+        messages_mod.time.monotonic = lambda: clock["t"]  # type: ignore[assignment]
+        try:
+            await msg.append_content("first")
+            clock["t"] = 100.2
+            await msg.append_content("second")
+        finally:
+            messages_mod.time.monotonic = original_monotonic
+
+        assert msg._fake_stream.all_written == "firstsecond"
+        assert msg._to_write_buffer == ""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 import getpass
@@ -169,7 +170,11 @@ class SessionLogger:
                 temp_metadata_filepath = Path(str(f.name))
                 await f.write(json.dumps(metadata, indent=2, ensure_ascii=False))
                 await f.flush()
-                os.fsync(f.wrapped.fileno())
+                # Offload fsync to a worker thread — the syscall blocks
+                # for tens of ms on slow disks at large metadata sizes,
+                # which would otherwise stall the event loop and freeze
+                # the TUI for the duration of the syscall.
+                await asyncio.to_thread(os.fsync, f.wrapped.fileno())
 
             os.replace(temp_metadata_filepath, str(metadata_filepath))
         except Exception as e:
@@ -196,8 +201,13 @@ class SessionLogger:
             ) as f:
                 for message in messages:
                     await f.write(json.dumps(message, ensure_ascii=False) + "\n")
-                    await f.flush()
-                    os.fsync(f.wrapped.fileno())
+                # Single fsync after all messages are written, offloaded
+                # to a worker thread. The previous per-message fsync
+                # inside the loop was an O(N) blocking-syscall storm at
+                # turn boundaries when N message rows grew with the
+                # conversation.
+                await f.flush()
+                await asyncio.to_thread(os.fsync, f.wrapped.fileno())
         except Exception as e:
             raise RuntimeError(
                 f"Failed to persist session messages to {messages_filepath}: {e}"
