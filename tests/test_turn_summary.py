@@ -174,75 +174,20 @@ class TestTurnSummaryTracker:
         assert "do something" in summary_msgs[1].content
 
     @pytest.mark.asyncio
-    async def test_end_turn_sends_secondary_call_metadata(self):
+    async def test_end_turn_does_not_pass_metadata_to_backend(self):
+        # Hard-disable invariant for this fork: TurnSummaryTracker no
+        # longer threads telemetry metadata into backend.complete. The
+        # upstream session_id/parent_session_id/entrypoint_metadata
+        # routing tests are gone with the kwarg.
         backend = FakeBackend(mock_llm_chunk(content="summary"))
-        tracker = TurnSummaryTracker(
-            backend=backend,
-            model=_TEST_MODEL,
-            session_metadata_getter=lambda: {
-                "agent_entrypoint": "cli",
-                "agent_version": "1.0.0",
-                "client_name": "vibe_cli",
-                "client_version": "1.0.0",
-                "session_id": "session-123",
-            },
-        )
-
-        tracker.start_turn("hello")
-        tracker.end_turn()
-        await asyncio.sleep(0.1)
-
-        metadata = backend.requests_metadata[0]
-        assert metadata is not None
-        assert metadata["agent_entrypoint"] == "cli"
-        assert metadata["agent_version"] == "1.0.0"
-        assert metadata["client_name"] == "vibe_cli"
-        assert metadata["client_version"] == "1.0.0"
-        assert metadata["session_id"] == "session-123"
-        assert "parent_session_id" not in metadata
-        assert metadata["call_source"] == "vibe_code"
-        assert metadata["call_type"] == "secondary_call"
-
-    @pytest.mark.asyncio
-    async def test_end_turn_sends_message_id_when_user_message_event_tracked(self):
-        backend = FakeBackend(mock_llm_chunk(content="summary"))
-        tracker = TurnSummaryTracker(
-            backend=backend,
-            model=_TEST_MODEL,
-            session_metadata_getter=lambda: {"session_id": "session-123"},
-        )
+        tracker = TurnSummaryTracker(backend=backend, model=_TEST_MODEL)
 
         tracker.start_turn("hello")
         tracker.track(UserMessageEvent(content="hello", message_id="message-456"))
         tracker.end_turn()
         await asyncio.sleep(0.1)
 
-        metadata = backend.requests_metadata[0]
-        assert metadata is not None
-        assert metadata["message_id"] == "message-456"
-        assert metadata["call_type"] == "secondary_call"
-
-    @pytest.mark.asyncio
-    async def test_end_turn_sends_parent_session_id_when_present(self):
-        backend = FakeBackend(mock_llm_chunk(content="summary"))
-        tracker = TurnSummaryTracker(
-            backend=backend,
-            model=_TEST_MODEL,
-            session_metadata_getter=lambda: {
-                "session_id": "session-123",
-                "parent_session_id": "parent-session-456",
-            },
-        )
-
-        tracker.start_turn("hello")
-        tracker.end_turn()
-        await asyncio.sleep(0.1)
-
-        metadata = backend.requests_metadata[0]
-        assert metadata is not None
-        assert metadata["session_id"] == "session-123"
-        assert metadata["parent_session_id"] == "parent-session-456"
-        assert metadata["call_type"] == "secondary_call"
+        assert all(m is None for m in backend.requests_metadata)
 
     @pytest.mark.asyncio
     async def test_end_turn_clears_state(self):

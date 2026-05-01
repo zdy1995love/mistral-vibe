@@ -142,11 +142,6 @@ class NarratorManager:
         return TurnSummaryTracker(
             backend=backend,
             model=model,
-            session_metadata_getter=(
-                None
-                if telemetry_client is None
-                else telemetry_client.build_client_event_metadata
-            ),
         )
 
     @staticmethod
