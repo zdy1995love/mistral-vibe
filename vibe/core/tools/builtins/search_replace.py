@@ -11,6 +11,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from vibe.core.rewind.manager import FileSnapshot
+from vibe.core.scratchpad import is_scratchpad_path
 from vibe.core.tools.base import (
     BaseTool,
     BaseToolConfig,
@@ -91,9 +92,10 @@ class SearchReplace(
 
     @classmethod
     def format_call_display(cls, args: SearchReplaceArgs) -> ToolCallDisplay:
+        tag = " (scratchpad)" if is_scratchpad_path(args.file_path) else ""
         blocks = cls._parse_search_replace_blocks(args.content)
         return ToolCallDisplay(
-            summary=f"Patching {args.file_path} ({len(blocks)} blocks)",
+            summary=f"Patching {args.file_path} ({len(blocks)} blocks){tag}",
             content=args.content,
         )
 
@@ -101,9 +103,10 @@ class SearchReplace(
     def get_result_display(cls, event: ToolResultEvent) -> ToolResultDisplay:
         if isinstance(event.result, SearchReplaceResult):
             path_name = Path(event.result.file).name
+            tag = " (scratchpad)" if is_scratchpad_path(event.result.file) else ""
             return ToolResultDisplay(
                 success=True,
-                message=f"Applied {event.result.blocks_applied} block{'' if event.result.blocks_applied == 1 else 's'} to {path_name}",
+                message=f"Applied {event.result.blocks_applied} block{'' if event.result.blocks_applied == 1 else 's'} to {path_name}{tag}",
                 warnings=event.result.warnings,
             )
 

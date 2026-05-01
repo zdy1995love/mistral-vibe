@@ -14,6 +14,7 @@ from vibe.core.llm.backend.mistral_text_tool_call_extractor import (
     CompletedToolCall,
     MistralToolCallTextExtractor,
 )
+from vibe.core.llm.backend.openai_responses import OpenAIResponsesAdapter
 from vibe.core.llm.backend.reasoning_adapter import ReasoningAdapter
 from vibe.core.llm.backend.think_tag_extractor import ThinkTagExtractor
 from vibe.core.llm.exceptions import BackendErrorBuilder
@@ -133,7 +134,12 @@ class OpenAIAdapter(APIAdapter):
             self._reasoning_to_api(
                 msg.model_dump(
                     exclude_none=True,
-                    exclude={"message_id", "reasoning_message_id", "injected"},
+                    exclude={
+                        "message_id",
+                        "reasoning_message_id",
+                        "reasoning_state",
+                        "injected",
+                    },
                 ),
                 field_name,
                 send_thinking_blocks=send_blocks,
@@ -274,9 +280,9 @@ _ADAPTERS: dict[str, APIAdapter] = {
 
 
 def _get_adapter(api_style: str) -> APIAdapter:
-    """Loads the appropriate adapter for the given API style,
-    lazily if the adapter is not already loaded.
-    """
+    """Load the adapter for the given API style."""
+    if api_style == "openai-responses":
+        return OpenAIResponsesAdapter()
     if api_style not in _ADAPTERS:
         if api_style == "vertex-anthropic":
             from vibe.core.llm.backend.vertex import VertexAnthropicAdapter

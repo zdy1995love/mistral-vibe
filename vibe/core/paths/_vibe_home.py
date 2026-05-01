@@ -31,6 +31,7 @@ SESSION_LOG_DIR = GlobalPath(lambda: VIBE_HOME.path / "logs" / "session")
 TRUSTED_FOLDERS_FILE = GlobalPath(lambda: VIBE_HOME.path / "trusted_folders.toml")
 LOG_DIR = GlobalPath(lambda: VIBE_HOME.path / "logs")
 LOG_FILE = GlobalPath(lambda: VIBE_HOME.path / "logs" / "vibe.log")
+CACHE_FILE = GlobalPath(lambda: VIBE_HOME.path / "cache.toml")
 HISTORY_FILE = GlobalPath(lambda: VIBE_HOME.path / "vibehistory")
 # PLANS_DIR is project-local, not under VIBE_HOME — plans co-locate with the
 # code they describe so multiple projects don't collide and a plan stays with
