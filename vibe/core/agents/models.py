@@ -103,19 +103,59 @@ CHAT_AGENT_TOOLS = ["grep", "read_file", "ask_user_question", "task"]
 # you need stricter safety, add a redirect detector to the dispatch gate.
 _PLAN_BASH_READ_ONLY_ALLOWLIST = [
     # File listing & inspection
-    "ls", "find", "tree", "cat", "head", "tail", "less", "more",
-    "file", "stat", "wc", "du", "df",
+    "ls",
+    "find",
+    "tree",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "file",
+    "stat",
+    "wc",
+    "du",
+    "df",
     # Text search
-    "grep", "egrep", "fgrep", "rg", "ag",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
     # Path / info
-    "pwd", "which", "whereis", "type", "basename", "dirname", "realpath",
-    "echo", "date", "whoami", "uname", "hostname", "uptime",
+    "pwd",
+    "which",
+    "whereis",
+    "type",
+    "basename",
+    "dirname",
+    "realpath",
+    "echo",
+    "date",
+    "whoami",
+    "uname",
+    "hostname",
+    "uptime",
     # Read-only process / system info
-    "ps", "pgrep", "lsof", "id", "groups", "env", "printenv",
+    "ps",
+    "pgrep",
+    "lsof",
+    "id",
+    "groups",
+    "env",
+    "printenv",
     # Git read-only operations
-    "git status", "git log", "git diff", "git show", "git branch",
-    "git tag", "git remote", "git rev-parse", "git ls-files",
-    "git blame", "git config --get",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "git tag",
+    "git remote",
+    "git rev-parse",
+    "git ls-files",
+    "git blame",
+    "git config --get",
 ]
 
 
@@ -135,10 +175,7 @@ def _plan_overrides() -> dict[str, Any]:
         "tools": {
             "write_file": {"permission": "ask", "allowlist": [plans_pattern]},
             "search_replace": {"permission": "ask", "allowlist": [plans_pattern]},
-            "bash": {
-                "permission": "ask",
-                "allowlist": _PLAN_BASH_READ_ONLY_ALLOWLIST,
-            },
+            "bash": {"permission": "ask", "allowlist": _PLAN_BASH_READ_ONLY_ALLOWLIST},
         },
         # Hide the entry tool while already in plan; ExitPlanMode is the way out.
         "base_disabled": ["enter_plan_mode"],
@@ -195,7 +232,10 @@ AUTO_APPROVE = AgentProfile(
     "Auto Approve",
     "Auto-approves all tool executions",
     AgentSafety.YOLO,
-    overrides={"bypass_tool_permissions": True, "base_disabled": _NON_PLAN_BASE_DISABLED},
+    overrides={
+        "bypass_tool_permissions": True,
+        "base_disabled": _NON_PLAN_BASE_DISABLED,
+    },
 )
 
 EXPLORE = AgentProfile(

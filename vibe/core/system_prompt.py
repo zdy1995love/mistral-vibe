@@ -274,7 +274,7 @@ def _resolve_output_style_section(config: VibeConfig) -> tuple[str, ...]:
             "Unknown output_style %r; falling back to 'default'", config.output_style
         )
         text = _safe_default()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Per-turn assembly invariant: never crash. OSError, UnicodeDecodeError,
         # and anything else (filesystem oddities, future-added exceptions) all
         # land here. The exception is preserved in the warning for diagnosis.

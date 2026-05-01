@@ -167,10 +167,7 @@ class TestErrorCases:
 
     @pytest.mark.asyncio
     async def test_rejects_when_plan_file_missing(
-        self,
-        tool: ExitPlanMode,
-        plan_manager: MockAgentManager,
-        tmp_path: Path,
+        self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
     ) -> None:
         ctx = InvokeContext(
             tool_call_id="t1",
@@ -183,10 +180,7 @@ class TestErrorCases:
 
     @pytest.mark.asyncio
     async def test_rejects_when_plan_file_empty(
-        self,
-        tool: ExitPlanMode,
-        plan_manager: MockAgentManager,
-        tmp_path: Path,
+        self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
     ) -> None:
         empty = tmp_path / "empty.md"
         empty.write_text("   \n\n")
@@ -234,7 +228,7 @@ class TestForkOnApproval:
                     display_name="Auto",
                     description="",
                     safety=AgentSafety.SAFE,
-                ),
+                )
             },
         )
         fork_cb = MockForkToDevCallback()

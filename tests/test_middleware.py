@@ -242,12 +242,8 @@ class TestReadOnlyAgentMiddleware:
         in agent_loop._handle_middleware_result, not in middleware itself.
         """
         from tests.conftest import build_test_agent_loop, build_test_vibe_config
+        from vibe.core.middleware import MiddlewareAction, MiddlewareResult
         from vibe.core.types import LLMMessage, Role
-        from vibe.core.middleware import (
-            ConversationContext,
-            MiddlewareAction,
-            MiddlewareResult,
-        )
 
         cfg = build_test_vibe_config()
         loop = build_test_agent_loop(config=cfg)

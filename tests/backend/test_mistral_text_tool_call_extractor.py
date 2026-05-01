@@ -45,17 +45,7 @@ def test_empty_feed_is_noop() -> None:
 
 
 def test_extracts_single_tool_call_split_across_many_chunks() -> None:
-    chunks = [
-        "[TOOL_CALLS]",
-        "bash",
-        '{"',
-        "command",
-        '":',
-        ' "',
-        "ls",
-        ' -la"',
-        "}",
-    ]
+    chunks = ["[TOOL_CALLS]", "bash", '{"', "command", '":', ' "', "ls", ' -la"', "}"]
     content, calls = _replay(chunks)
     assert content == ""
     assert len(calls) == 1
@@ -212,6 +202,4 @@ def test_flush_emits_pending_partial_suffix() -> None:
     ],
 )
 def test_is_valid_tool_call_predicate(name: str, args: str, expected: bool) -> None:
-    assert (
-        MistralToolCallTextExtractor._is_valid_tool_call(name, args) is expected
-    )
+    assert MistralToolCallTextExtractor._is_valid_tool_call(name, args) is expected

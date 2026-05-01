@@ -151,11 +151,7 @@ class ExitPlanMode(
             # Defensive: stashed profile may have been removed mid-plan
             # (e.g., agent toml deleted while user was planning).
             available = getattr(ctx.agent_manager, "available_agents", None)
-            if (
-                stashed
-                and available is not None
-                and stashed not in available
-            ):
+            if stashed and available is not None and stashed not in available:
                 target_profile = BuiltinAgentName.DEFAULT
         elif answer.is_other:
             yield ExitPlanModeResult(
@@ -191,7 +187,5 @@ class ExitPlanMode(
         )
         yield ExitPlanModeResult(
             switched=True,
-            message=(
-                f"Plan approved. Forking to {target_profile} with plan as seed."
-            ),
+            message=(f"Plan approved. Forking to {target_profile} with plan as seed."),
         )

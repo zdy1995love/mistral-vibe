@@ -369,10 +369,7 @@ THINKING_LEVELS: list[str] = list(get_args(ThinkingLevel))
 # Temperature companion values applied by set_thinking when the level
 # changes. "high" pushes temperature up to encourage exploratory
 # reasoning; "off" pulls it down to keep deterministic outputs.
-_THINKING_TEMPERATURE: dict[str, float] = {
-    "high": 0.7,
-    "off": 0.3,
-}
+_THINKING_TEMPERATURE: dict[str, float] = {"high": 0.7, "off": 0.3}
 
 
 class ModelConfig(BaseModel):

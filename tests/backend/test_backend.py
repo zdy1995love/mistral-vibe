@@ -545,10 +545,7 @@ class TestMistralBackendReasoningEffort:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("thinking", "expected_effort", "expected_temperature"),
-        [
-            ("off", None, 0.2),
-            ("high", "high", 1.0),
-        ],
+        [("off", None, 0.2), ("high", "high", 1.0)],
     )
     async def test_complete_passes_reasoning_effort(
         self,

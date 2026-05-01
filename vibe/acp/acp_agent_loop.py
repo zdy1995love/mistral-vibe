@@ -889,9 +889,7 @@ class VibeAcpAgentLoop(AcpAgent):
                     elif isinstance(event, ReasoningEvent):
                         yield AgentThoughtChunk(
                             session_update="agent_thought_chunk",
-                            content=TextContentBlock(
-                                type="text", text=event.content
-                            ),
+                            content=TextContentBlock(type="text", text=event.content),
                             message_id=event.message_id,
                         )
 

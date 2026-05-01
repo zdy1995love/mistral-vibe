@@ -175,9 +175,7 @@ ReasoningEffortValue = Literal["none", "high"]
 # rows are unreachable, but kept as commented references should the scale
 # expand again. "off" is intentionally absent: missing keys map to None
 # via .get(), which signals "do not send reasoning_effort".
-_THINKING_TO_REASONING_EFFORT: dict[str, ReasoningEffortValue] = {
-    "high": "high",
-}
+_THINKING_TO_REASONING_EFFORT: dict[str, ReasoningEffortValue] = {"high": "high"}
 
 
 class MistralBackend:

@@ -126,7 +126,6 @@ from vibe.core.audio_recorder import AudioRecorder
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
 from vibe.core.compact.micro import micro_compact
 from vibe.core.config import VibeConfig
-from vibe.core.config.harness_files import get_harness_files_manager
 from vibe.core.data_retention import DATA_RETENTION_MESSAGE
 from vibe.core.hooks.models import HookStartEvent
 from vibe.core.log_reader import LogReader
@@ -1243,7 +1242,9 @@ class VibeApp(App):  # noqa: PLR0904
             current_prompt = prompt
             while True:
                 await self._ensure_loading_widget()
-                rendered_prompt = render_path_prompt(current_prompt, base_dir=Path.cwd())
+                rendered_prompt = render_path_prompt(
+                    current_prompt, base_dir=Path.cwd()
+                )
                 self._narrator_manager.cancel()
                 self._narrator_manager.on_turn_start(rendered_prompt)
                 async with aclosing(self.agent_loop.act(rendered_prompt)) as events:
@@ -1994,7 +1995,10 @@ class VibeApp(App):  # noqa: PLR0904
             # Defensive: a custom pre-plan profile may have been removed
             # while the user was in plan mode (e.g., agent toml deleted).
             # Fall back to DEFAULT rather than letting get_agent raise.
-            if stashed and stashed not in self.agent_loop.agent_manager.available_agents:
+            if (
+                stashed
+                and stashed not in self.agent_loop.agent_manager.available_agents
+            ):
                 target = BuiltinAgentName.DEFAULT
         else:
             target = BuiltinAgentName.PLAN

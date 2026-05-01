@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from enum import Enum, auto
 import json
 import re
 import secrets
 import string
-from enum import Enum, auto
 
 _VALID_TOOL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,127}$")
 

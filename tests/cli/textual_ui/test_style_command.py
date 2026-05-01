@@ -191,9 +191,7 @@ class TestStyleSwitchInPlanMode:
         )
 
         config = build_test_vibe_config(output_style="default")
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
         app = build_test_vibe_app(agent_loop=loop)
         captured: list[Any] = []
 
@@ -224,4 +222,5 @@ class TestStyleSwitchInPlanMode:
         assert loop.agent_profile.name == BuiltinAgentName.PLAN
         # Confirm message at index 0 is the (refreshed) system prompt.
         from vibe.core.types import Role
+
         assert loop.messages[0].role == Role.system

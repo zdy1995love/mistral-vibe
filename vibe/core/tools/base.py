@@ -55,9 +55,9 @@ class InvokeContext:
     # Stage a fork-to-dev: the host app reads it after the current act()
     # returns, wipes context, and re-enters act() with the seed message.
     # Signature: (plan_text, plan_path, target_profile) -> None.
-    request_fork_to_dev_callback: (
-        Callable[[str, Path, str], None] | None
-    ) = field(default=None)
+    request_fork_to_dev_callback: Callable[[str, Path, str], None] | None = field(
+        default=None
+    )
     skill_manager: SkillManager | None = field(default=None)
     scratchpad_dir: Path | None = field(default=None)
 

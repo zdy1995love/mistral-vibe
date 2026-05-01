@@ -115,9 +115,10 @@ class TestPlanModeDispatchGate:
                             index=0,
                             function=FunctionCall(
                                 name="task",
-                                arguments=json.dumps(
-                                    {"agent": "explore", "task": "find foo"}
-                                ),
+                                arguments=json.dumps({
+                                    "agent": "explore",
+                                    "task": "find foo",
+                                }),
                             ),
                         )
                     ]
@@ -215,7 +216,13 @@ class TestPlanModeDispatchGate:
         plan_path = PLANS_DIR.path / "test-plan.md"
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         backend = FakeBackend([
-            [mock_llm_chunk(tool_calls=[_write_file_tool_call(str(plan_path), content="# Plan\n")])],
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        _write_file_tool_call(str(plan_path), content="# Plan\n")
+                    ]
+                )
+            ],
             [mock_llm_chunk(content="done")],
         ])
         config = build_test_vibe_config()
@@ -260,9 +267,7 @@ class TestForkToDev:
     @pytest.mark.asyncio
     async def test_fork_clears_history_switches_and_returns_seed(self) -> None:
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
         # Simulate plan-mode entry by stashing pre_plan_profile and seeding
         # a planning conversation.
         loop.agent_manager._pre_plan_profile = BuiltinAgentName.DEFAULT
@@ -297,9 +302,7 @@ class TestForkToDev:
     @pytest.mark.asyncio
     async def test_fork_without_pending_raises(self) -> None:
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
         with pytest.raises(Exception):  # AgentLoopError
             await loop.fork_to_dev()
 
@@ -309,14 +312,10 @@ class TestForkToDev:
         the just-approved plan.
         """
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
         original_plan_path = loop._plan_session.plan_file_path
 
-        loop.request_fork_to_dev(
-            "# Plan", original_plan_path, BuiltinAgentName.DEFAULT
-        )
+        loop.request_fork_to_dev("# Plan", original_plan_path, BuiltinAgentName.DEFAULT)
         await loop.fork_to_dev()
 
         # Plan session should be a fresh instance with an unevaluated path.
@@ -332,9 +331,7 @@ class TestForkToDev:
         path. Otherwise the second plan would overwrite the first.
         """
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
         # Force lazy-evaluation of the plan path (simulates LLM having
         # written or referenced the plan file during the first plan turn).
         first_path = loop._plan_session.plan_file_path
@@ -355,11 +352,10 @@ class TestForkToDev:
     @pytest.mark.asyncio
     async def test_plan_session_unchanged_when_not_leaving_plan(self) -> None:
         """Switching between non-PLAN profiles (DEFAULT ↔ ACCEPT_EDITS)
-        must NOT rotate plan_session — only leaving PLAN does."""
+        must NOT rotate plan_session — only leaving PLAN does.
+        """
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.DEFAULT
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.DEFAULT)
         original_session = loop._plan_session
         await loop.switch_agent(BuiltinAgentName.ACCEPT_EDITS)
         assert loop._plan_session is original_session
@@ -367,14 +363,11 @@ class TestForkToDev:
     @pytest.mark.asyncio
     async def test_fork_clears_pending_before_state_mutation(self) -> None:
         """Cancel-safety: pending_fork_to_dev is cleared up-front so a
-        partial-fork doesn't leave the host's loop spinning."""
+        partial-fork doesn't leave the host's loop spinning.
+        """
         config = build_test_vibe_config()
-        loop = build_test_agent_loop(
-            config=config, agent_name=BuiltinAgentName.PLAN
-        )
-        loop.request_fork_to_dev(
-            "# Plan", Path("/tmp/p.md"), BuiltinAgentName.DEFAULT
-        )
+        loop = build_test_agent_loop(config=config, agent_name=BuiltinAgentName.PLAN)
+        loop.request_fork_to_dev("# Plan", Path("/tmp/p.md"), BuiltinAgentName.DEFAULT)
         assert loop.pending_fork_to_dev is not None
         await loop.fork_to_dev()
         # After (or even mid-) fork, pending must be cleared.
@@ -458,11 +451,7 @@ class TestFullForkFlowEndToEnd:
 
         # Drive DEFAULT turn with seed — LLM implements.
         events_2 = [e async for e in loop.act(seed)]
-        assistant_replies = [
-            e for e in events_2 if isinstance(e, AssistantEvent)
-        ]
-        assert any(
-            "Implementing now" in (e.content or "") for e in assistant_replies
-        )
+        assistant_replies = [e for e in events_2 if isinstance(e, AssistantEvent)]
+        assert any("Implementing now" in (e.content or "") for e in assistant_replies)
         # Plan file persists on disk through the fork.
         assert plan_file.is_file()
