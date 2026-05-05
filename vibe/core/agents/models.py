@@ -41,6 +41,7 @@ class BuiltinAgentName(StrEnum):
     ACCEPT_EDITS = "accept-edits"
     AUTO_APPROVE = "auto-approve"
     EXPLORE = "explore"
+    GENERAL_PURPOSE = "general-purpose"
     LEAN = "lean"
 
 
@@ -247,6 +248,22 @@ EXPLORE = AgentProfile(
     overrides={"enabled_tools": ["grep", "read_file"], "system_prompt_id": "explore"},
 )
 
+GENERAL_PURPOSE = AgentProfile(
+    name=BuiltinAgentName.GENERAL_PURPOSE,
+    display_name="General-Purpose",
+    description=(
+        "General-purpose subagent for complex multi-step tasks: research, "
+        "code search, implementation, and mixed read/write work. Used by "
+        "superpowers' subagent-driven workflow when the parent passes a "
+        "role-defining prompt template (implementer, code-reviewer, etc.)."
+    ),
+    safety=AgentSafety.NEUTRAL,
+    agent_type=AgentType.SUBAGENT,
+    # No `enabled_tools` restriction → inherits parent's tool set (effectively
+    # all builtins). Mirrors Claude Code's `tools: ['*']` for general-purpose.
+    overrides={"system_prompt_id": "general_purpose"},
+)
+
 LEAN = AgentProfile(
     name=BuiltinAgentName.LEAN,
     display_name="Lean",
@@ -297,5 +314,6 @@ BUILTIN_AGENTS: dict[str, AgentProfile] = {
     BuiltinAgentName.ACCEPT_EDITS: ACCEPT_EDITS,
     BuiltinAgentName.AUTO_APPROVE: AUTO_APPROVE,
     BuiltinAgentName.EXPLORE: EXPLORE,
+    BuiltinAgentName.GENERAL_PURPOSE: GENERAL_PURPOSE,
     BuiltinAgentName.LEAN: LEAN,
 }

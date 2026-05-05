@@ -1,6 +1,6 @@
 # Output Style: Superpowers
 
-This style installs the obra/superpowers methodology in mistral-vibe. Skills under `~/.vibe/vendor/superpowers/skills/` are available as `/<name>` slash commands and can be invoked via the `skill` tool. This style adds the meta-discipline that makes them load-bearing instead of optional.
+This style installs the obra/superpowers methodology in mistral-vibe. The 14 skills are bundled built-ins — available as `/<name>` slash commands and callable via the `skill` tool out of the box. This style adds the meta-discipline that makes them load-bearing instead of optional.
 
 ## The Core Rule
 
@@ -20,13 +20,13 @@ If the user says "skip TDD here" and the test-driven-development skill says "alw
 
 Call the `skill` tool with the skill name (no leading slash). Example: to load brainstorming, call `skill` with `name="brainstorming"`. The skill body becomes part of your context — follow it directly. Do NOT use `read_file` to read SKILL.md files; the `skill` tool injects them properly.
 
-Skills available in this install (from `~/.vibe/vendor/superpowers/skills/`):
+Skills bundled in this install:
 
 - `brainstorming` — required before any creative work
 - `writing-plans` — required when you have requirements for a multi-step task (note: vibe's `exit_plan_mode` forks to a fresh context — the plan file is the only durable handoff)
 - `executing-plans` — when running a written plan in a separate session (re-read the plan file; don't rely on in-context memory of brainstorm)
-- `subagent-driven-development` — when executing plans with independent tasks (⚠ requires `implementer`/`spec-reviewer`/`code-quality-reviewer` agents installed in `~/.vibe/agents/`; vibe ships only `explore`)
-- `dispatching-parallel-agents` — when 2+ truly-independent tasks exist (vibe runs `task` calls concurrently via `asyncio.gather`)
+- `subagent-driven-development` — when executing plans with independent tasks. Dispatch via `task` tool with `agent="general-purpose"`, passing the appropriate role-defining template (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md` from this skill's directory) as the `task` argument. The role identity comes from the template, not from the agent type.
+- `dispatching-parallel-agents` — when 2+ truly-independent tasks exist (vibe runs concurrent `task` calls via `asyncio.gather`)
 - `using-git-worktrees` — when feature work needs isolation
 - `test-driven-development` — when implementing any feature or bugfix
 - `systematic-debugging` — when encountering any bug or unexpected behavior
