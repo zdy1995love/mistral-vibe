@@ -78,8 +78,9 @@ class TelemetryClient:
 
         All `send_*` methods early-return at `send_telemetry_event` because
         of this gate; no httpx client is ever instantiated, no network call
-        is made. The `enable_telemetry` config field is intentionally
-        ignored — flipping it has no effect.
+        is made. The `enable_telemetry` config field defaults to False and
+        is also intentionally ignored at runtime — flipping it has no
+        effect either way.
         """
         return False
 
