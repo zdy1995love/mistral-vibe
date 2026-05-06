@@ -11,21 +11,51 @@ if TYPE_CHECKING:
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
-from textual.widgets._markdown import MarkdownStream
 
 from vibe.cli.textual_ui.ansi_markdown import AnsiMarkdown as Markdown
 from vibe.cli.textual_ui.widgets.no_markup_static import NoMarkupStatic
 from vibe.cli.textual_ui.widgets.spinner import SpinnerMixin, SpinnerType
 
-# Min interval between Markdown.append flushes during streaming. Textual
-# 8.x's MarkdownStream re-parses the open block on every append, making
-# rendering O(N) per call where N grows with the response length. At slow
-# token rates (~17 tok/s on 24B vLLM) every chunk would otherwise trigger
-# a full re-parse — and at long messages that re-parse can stretch past
-# the inter-chunk gap, which the user observes as "throughput slower than
-# vLLM reports". 33ms (~30fps) is below human flicker perception while
-# letting bursts coalesce when parse latency exceeds chunk arrival rate.
+# Throttle window for streaming Static.update() flushes. Even after dropping
+# the per-chunk Markdown reparse, plain-text refresh still does an O(N)
+# re-render per call; coalescing sub-frame deltas keeps UI thread cost
+# bounded under high token rates. 33ms ≈ 30fps, below human flicker.
 _STREAM_FLUSH_INTERVAL_S: float = 0.033
+
+
+class _PlainTextStreamAdapter:
+    """Mimics Textual's `MarkdownStream` write/stop API but accumulates plain
+    text into a `NoMarkupStatic`. Used during streaming so each chunk costs
+    only a Static.update (no markdown parse, no syntax highlight). The body
+    is upgraded to a real `Markdown` widget once at `stop_stream()` —
+    paying parse cost O(N) once instead of per-chunk."""
+
+    def __init__(self, static: NoMarkupStatic) -> None:
+        self._static = static
+        self._buffer = ""
+        self._stopped = False
+
+    async def write(self, fragment: str) -> None:
+        if self._stopped:
+            raise RuntimeError("Can't write to the stream after it has stopped.")
+        if not fragment:
+            return
+        self._buffer += fragment
+        self._static.update(self._buffer)
+
+    async def stop(self) -> None:
+        self._stopped = True
+
+    @property
+    def buffer(self) -> str:
+        return self._buffer
+
+    def reset_to(self, content: str) -> None:
+        """Reset the visible content and internal buffer to `content`. Used
+        when ReasoningMessage uncollapses mid-stream and needs to replay
+        the accumulated content the user couldn't see while collapsed."""
+        self._buffer = content
+        self._static.update(content)
 
 
 class NonSelectableStatic(NoMarkupStatic):
@@ -83,30 +113,46 @@ class UserMessage(Static):
 
 
 class StreamingMessageBase(Static):
-    # Throttle window for Markdown.append flushes — overridable in tests so
-    # the original direct-write semantics still hold under unit tests that
-    # don't care about throttling.
+    # Throttle window for streaming Static.update() flushes — overridable in
+    # tests so the original direct-write semantics still hold under unit
+    # tests that don't care about throttling.
     _flush_interval_s: float = _STREAM_FLUSH_INTERVAL_S
+
+    # Class-level defaults so test doubles that bypass __init__ can still
+    # use the new fields without tripping AttributeError.
+    _streaming_static: NoMarkupStatic | None = None
+    _finalized: bool = False
 
     def __init__(self, content: str) -> None:
         super().__init__()
         self._content = content
+        self._streaming_static: NoMarkupStatic | None = None
         self._markdown: Markdown | None = None
-        self._stream: MarkdownStream | None = None
+        self._stream: _PlainTextStreamAdapter | None = None
         self._content_initialized = False
         self._to_write_buffer = ""
         self._last_flush_monotonic: float = 0.0
+        self._finalized = False
 
-    def _get_markdown(self) -> Markdown:
-        if self._markdown is None:
-            raise RuntimeError(
-                "Markdown widget not initialized. compose() must be called first."
-            )
-        return self._markdown
+    def _create_streaming_static(self, *, classes: str = "") -> NoMarkupStatic:
+        """Build the plain-text body widget yielded by `compose`. Subclasses
+        call this once and yield the result."""
+        widget = NoMarkupStatic("", classes=classes)
+        self._streaming_static = widget
+        return widget
 
-    def _ensure_stream(self) -> MarkdownStream:
+    def _build_markdown_widget(self, content: str) -> Markdown:
+        """Build the final Markdown widget that replaces the streaming static
+        on `_finalize_to_markdown`. Subclasses override to set classes."""
+        return Markdown(content)
+
+    def _ensure_stream(self) -> _PlainTextStreamAdapter:
         if self._stream is None:
-            self._stream = Markdown.get_stream(self._get_markdown())
+            if self._streaming_static is None:
+                raise RuntimeError(
+                    "Streaming static not initialized. compose() must be called first."
+                )
+            self._stream = _PlainTextStreamAdapter(self._streaming_static)
         return self._stream
 
     def _is_chat_at_bottom(self) -> bool:
@@ -131,9 +177,8 @@ class StreamingMessageBase(Static):
             self._to_write_buffer += content
             return
 
-        # Coalesce sub-frame deltas: if it's been less than the flush
-        # interval since the last Markdown.append, accumulate and let a
-        # later chunk (or stop_stream) drive the actual write.
+        # Coalesce sub-frame deltas: under the flush interval, accumulate
+        # and let a later chunk (or stop_stream) drive the actual write.
         now = time.monotonic()
         self._to_write_buffer += content
         if now - self._last_flush_monotonic < self._flush_interval_s:
@@ -160,11 +205,41 @@ class StreamingMessageBase(Static):
             await stream.write(self._to_write_buffer)
         self._to_write_buffer = ""
 
-        if self._stream is None:
+        if self._stream is not None:
+            await self._stream.stop()
+            self._stream = None
+
+        if self._finalized:
+            return
+        await self._finalize_to_markdown()
+
+    async def _finalize_to_markdown(self) -> None:
+        """Replace the plain-text streaming widget with a Markdown widget
+        carrying the full accumulated content. Pays the parse cost once."""
+        self._finalized = True
+
+        if self._streaming_static is None:
             return
 
-        await self._stream.stop()
-        self._stream = None
+        parent = self._streaming_static.parent
+        if parent is None:
+            # Not mounted (unit tests or never composed) — nothing to swap.
+            return
+
+        if not self._content:
+            # Nothing to render as Markdown — leave the static in place.
+            return
+
+        markdown = self._build_markdown_widget("")
+        # Hide the new widget while it parses to avoid an empty-flash, then
+        # reveal once the content is loaded (or keep hidden if collapsed).
+        markdown.display = False
+        await parent.mount(markdown, after=self._streaming_static)
+        await markdown.update(self._content)
+        markdown.display = self._should_write_content()
+        self._markdown = markdown
+        await self._streaming_static.remove()
+        self._streaming_static = None
 
     def _should_write_content(self) -> bool:
         return True
@@ -182,9 +257,7 @@ class AssistantMessage(StreamingMessageBase):
         self.add_class("assistant-message")
 
     def compose(self) -> ComposeResult:
-        markdown = Markdown("")
-        self._markdown = markdown
-        yield markdown
+        yield self._create_streaming_static()
 
 
 class ReasoningMessage(SpinnerMixin, StreamingMessageBase):
@@ -215,10 +288,12 @@ class ReasoningMessage(SpinnerMixin, StreamingMessageBase):
                     "▶" if self.collapsed else "▼", classes="reasoning-triangle"
                 )
                 yield self._triangle_widget
-            markdown = Markdown("", classes="reasoning-message-content")
-            markdown.display = not self.collapsed
-            self._markdown = markdown
-            yield markdown
+            body = self._create_streaming_static(classes="reasoning-message-content")
+            body.display = not self.collapsed
+            yield body
+
+    def _build_markdown_widget(self, content: str) -> Markdown:
+        return Markdown(content, classes="reasoning-message-content")
 
     def on_mount(self) -> None:
         self.start_spinner_timer()
@@ -242,16 +317,23 @@ class ReasoningMessage(SpinnerMixin, StreamingMessageBase):
         self.collapsed = collapsed
         if self._triangle_widget:
             self._triangle_widget.update("▶" if collapsed else "▼")
-        if self._markdown:
+
+        # Post-stream: Markdown widget already exists, just toggle visibility.
+        if self._markdown is not None:
             self._markdown.display = not collapsed
-            if not collapsed and self._content:
-                if self._stream is not None:
-                    await self._stream.stop()
-                    self._stream = None
-                await self._markdown.update("")
-                stream = self._ensure_stream()
-                await stream.write(self._content)
-                self._to_write_buffer = ""
+            return
+
+        # Mid-stream: streaming static is the body. Toggle display, and on
+        # uncollapse replay accumulated content (writes were skipped while
+        # collapsed via _should_write_content gate).
+        if self._streaming_static is None:
+            return
+
+        self._streaming_static.display = not collapsed
+        if not collapsed and self._content:
+            stream = self._ensure_stream()
+            stream.reset_to(self._content)
+            self._to_write_buffer = ""
 
 
 class UserCommandMessage(Static):

@@ -26,6 +26,11 @@ The `print` statement includes a very long line of Lorem Ipsum text to demonstra
         messages_area = app.query_one("#messages")
         await messages_area.mount(assistant_message)
         await assistant_message.write_initial_content()
+        # Plain-text streaming: the body is a Static during streaming and
+        # only becomes Markdown after stop_stream finalizes it. Trigger that
+        # finalization explicitly here since the test is exercising the
+        # post-render Markdown output, not the streaming view.
+        await assistant_message.stop_stream()
         await pilot.pause(0.1)
 
         markdown_fence = app.query_one(MarkdownFence)

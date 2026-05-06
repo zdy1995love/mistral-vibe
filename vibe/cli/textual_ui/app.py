@@ -1340,6 +1340,11 @@ class VibeApp(App):  # noqa: PLR0904
         for widget in widgets:
             if isinstance(widget, StreamingMessageBase):
                 await widget.write_initial_content()
+                # Restored messages never stream more chunks, so finalize
+                # immediately — swap plain-text body for the real Markdown
+                # widget. Live streams call stop_stream from the event
+                # handler at end-of-turn instead.
+                await widget.stop_stream()
 
     def _is_tool_enabled_in_main_agent(self, tool: str) -> bool:
         return tool in self.agent_loop.tool_manager.available_tools
