@@ -517,6 +517,56 @@ async def test_fill_missing_tool_responses_inserts_placeholders() -> None:
 
 
 @pytest.mark.asyncio
+async def test_orphan_trailing_tool_gets_assistant_ack_before_next_user_turn() -> None:
+    """When the previous turn ended with a 'tool' role message — typically
+    because the user cancelled mid-tool-execution and the LLM never produced
+    its follow-up — strict chat backends (vLLM) reject the next request
+    with HTTP 400 `Unexpected role 'user' after role 'tool'`. The repair
+    runs via _clean_message_history at the start of each act() and must
+    inject a synthetic assistant message after any orphan trailing tool
+    result so the freshly-appended user message has a valid predecessor.
+    """
+    agent_loop = build_test_agent_loop(
+        config=make_config(),
+        agent_name=BuiltinAgentName.AUTO_APPROVE,
+        backend=FakeBackend(mock_llm_chunk(content="acknowledged")),
+    )
+    tool_call = make_todo_tool_call("tc1")
+    agent_loop.messages.reset([
+        agent_loop.messages[0],  # system
+        LLMMessage(role=Role.user, content="run a tool"),
+        LLMMessage(
+            role=Role.assistant,
+            content="Calling tool...",
+            tool_calls=[tool_call],
+        ),
+        # Tool execution was cancelled mid-flight — cancellation marker
+        # was recorded but no assistant follow-up was generated.
+        LLMMessage(
+            role=Role.tool,
+            tool_call_id="tc1",
+            name="todo",
+            content="<user_cancellation>Tool execution interrupted by user.</user_cancellation>",
+        ),
+    ])
+
+    await act_and_collect_events(agent_loop, "continue please")
+
+    msgs = list(agent_loop.messages)
+    new_user_idx = next(
+        i
+        for i, m in enumerate(msgs)
+        if m.role == Role.user and m.content == "continue please"
+    )
+    prev = msgs[new_user_idx - 1]
+    assert prev.role == Role.assistant, (
+        f"Expected role-assistant before new user message, got role-{prev.role.value}. "
+        "Strict backends (vLLM) reject role 'user' immediately after role 'tool' "
+        "with HTTP 400."
+    )
+
+
+@pytest.mark.asyncio
 async def test_parallel_tool_calls_produce_correct_events(
     telemetry_events: list[dict],
 ) -> None:

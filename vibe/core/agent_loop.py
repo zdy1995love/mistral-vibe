@@ -1496,6 +1496,39 @@ class AgentLoop:
         if len(self.messages) < ACCEPTABLE_HISTORY_SIZE:
             return
         self._fill_missing_tool_responses()
+        self._close_orphan_trailing_tool_message()
+
+    def _close_orphan_trailing_tool_message(self) -> None:
+        """Inject a synthetic assistant ack after any orphan trailing tool
+        message so the next user turn satisfies role-sequence invariants.
+
+        Strict chat backends (vLLM) reject role 'user' immediately after
+        role 'tool' with HTTP 400. This happens when the user cancels
+        mid-tool-execution: the cancellation marker is recorded into the
+        tool message at `_process_one_tool_call`'s CancelledError handler,
+        but the LLM never gets to produce its follow-up assistant turn
+        before the cancellation propagates up through `_conversation_loop`.
+        The malformed history is persisted to disk by `_save_messages` in
+        the loop's `finally`, so resuming the session reproduces the 400
+        on every subsequent prompt.
+
+        Running this from `_clean_message_history` (called at every
+        `act()` entry) means both freshly-cancelled sessions and previously
+        broken on-disk sessions are auto-repaired before the new user
+        message lands.
+        """
+        if not self.messages or self.messages[-1].role != Role.tool:
+            return
+        self.messages.append(
+            LLMMessage(
+                role=Role.assistant,
+                content=str(
+                    get_user_cancellation_message(
+                        CancellationReason.OPERATION_CANCELLED
+                    )
+                ),
+            )
+        )
 
     def _fill_missing_tool_responses(self) -> None:
         i = 1
