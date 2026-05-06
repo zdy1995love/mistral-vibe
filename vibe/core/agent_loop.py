@@ -224,6 +224,13 @@ def _sanitize_tool_call_arguments(message: LLMMessage) -> LLMMessage:
     return message.model_copy(update={"tool_calls": new_tool_calls})
 
 
+def _is_non_retryable_error(e: BaseException) -> bool:
+    # Detect Temporal-style ``non_retryable`` flag without importing temporalio.
+    # Wrapping such an exception in a plain RuntimeError strips the flag, so
+    # Temporal's activity retry policy will retry the call until exhaustion.
+    return bool(getattr(e, "non_retryable", False))
+
+
 def requires_init(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator that awaits deferred initialization before executing the method."""
     if inspect.isasyncgenfunction(fn):
@@ -504,6 +511,10 @@ class AgentLoop:
                         scope=rp.scope,
                         session_pattern=rp.session_pattern,
                     )
+                )
+            if save_permanently:
+                self.config.add_tool_allowlist_patterns(
+                    tool_name, [rp.session_pattern for rp in required_permissions]
                 )
         else:
             self.set_tool_permission(
@@ -1314,6 +1325,8 @@ class AgentLoop:
                 raise RateLimitError(provider.name, active_model.name) from e
             if _is_context_too_long_error(e):
                 raise ContextTooLongError(provider.name, active_model.name) from e
+            if _is_non_retryable_error(e):
+                raise
 
             raise RuntimeError(
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
@@ -1389,6 +1402,8 @@ class AgentLoop:
                 raise RateLimitError(provider.name, active_model.name) from e
             if _is_context_too_long_error(e):
                 raise ContextTooLongError(provider.name, active_model.name) from e
+            if _is_non_retryable_error(e):
+                raise
 
             raise RuntimeError(
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
@@ -1528,13 +1543,14 @@ class AgentLoop:
 
             i += 1
 
-    def _reset_session(self) -> None:
+    def _reset_session(self, keep_parent: bool = True) -> None:
         old_session_id = self.session_id
         suffix = extract_suffix(self.session_id)
         self.session_id = generate_session_id(suffix=suffix)
-        self.parent_session_id = old_session_id
+        parent_session_id = old_session_id if keep_parent else None
+        self.parent_session_id = parent_session_id
         self.session_logger.reset_session(
-            self.session_id, parent_session_id=old_session_id
+            self.session_id, parent_session_id=parent_session_id
         )
         self.emit_new_session_telemetry()
 
@@ -1665,7 +1681,7 @@ class AgentLoop:
 
         self.middleware_pipeline.reset()
         self.tool_manager.reset_all()
-        self._reset_session()
+        self._reset_session(keep_parent=False)
 
     @requires_init
     async def compact(self, extra_instructions: str = "") -> str:
