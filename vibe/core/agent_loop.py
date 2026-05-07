@@ -116,6 +116,7 @@ from vibe.core.types import (
     ToolCallEvent,
     ToolResultEvent,
     ToolStreamEvent,
+    TurnRecord,
     UserInputCallback,
     UserMessageEvent,
 )
@@ -464,6 +465,7 @@ class AgentLoop:
         self.messages = MessageList(initial=[system_message], observer=message_observer)
 
         self.stats = AgentStats()
+        self._pending_turn_tools: list[str] = []
         self.approval_callback: ApprovalCallback | None = None
         self.user_input_callback: UserInputCallback | None = None
         self.entrypoint_metadata = entrypoint_metadata
@@ -1711,11 +1713,24 @@ class AgentLoop:
         self.stats.last_turn_duration = time_seconds
         self.stats.last_turn_prompt_tokens = usage.prompt_tokens
         self.stats.last_turn_completion_tokens = usage.completion_tokens
+        self.stats.last_turn_cached_tokens = usage.cached_prompt_tokens
         self.stats.session_prompt_tokens += usage.prompt_tokens
         self.stats.session_completion_tokens += usage.completion_tokens
+        self.stats.session_cached_tokens += usage.cached_prompt_tokens
         self.stats.context_tokens = usage.prompt_tokens + usage.completion_tokens
         if time_seconds > 0 and usage.completion_tokens > 0:
             self.stats.tokens_per_second = usage.completion_tokens / time_seconds
+
+        self.stats.turns.append(TurnRecord(
+            index=self.stats.steps,
+            prompt_tokens=usage.prompt_tokens,
+            cached_tokens=usage.cached_prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            duration=time_seconds,
+            started_at=time.time() - time_seconds,
+            tools=list(self._pending_turn_tools),
+        ))
+        self._pending_turn_tools.clear()
 
     async def _should_execute_tool(
         self, tool: BaseTool, args: BaseModel, tool_call_id: str
