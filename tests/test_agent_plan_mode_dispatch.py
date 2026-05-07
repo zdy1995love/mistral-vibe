@@ -98,13 +98,11 @@ class TestPlanModeDispatchGate:
         assert target.read_text() == "hi"
 
     @pytest.mark.asyncio
-    async def test_task_tool_blocked_in_plan_mode(self) -> None:
-        """Task is mutates_state=True (subagents may write); gate must fire.
-
-        This pins the contract that even research-style subagent spawning
-        is blocked in plan mode — for v1 we play safe. If we later allow
-        explicit read-only subagents during planning, this test guards the
-        change.
+    async def test_task_to_non_safe_subagent_blocked_in_plan_mode(self) -> None:
+        """Task → non-SAFE subagent (e.g. general-purpose, NEUTRAL) is
+        blocked in plan mode — the subagent could write, breaking the
+        read-only invariant. Only SAFE-safety subagents are allowlisted
+        (see test_task_to_safe_subagent_allowed_in_plan_mode).
         """
         backend = FakeBackend([
             [
@@ -116,8 +114,8 @@ class TestPlanModeDispatchGate:
                             function=FunctionCall(
                                 name="task",
                                 arguments=json.dumps({
-                                    "agent": "explore",
-                                    "task": "find foo",
+                                    "agent": "general-purpose",
+                                    "task": "do whatever",
                                 }),
                             ),
                         )
@@ -131,11 +129,56 @@ class TestPlanModeDispatchGate:
             config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
         )
 
-        events = [e async for e in loop.act("explore something")]
+        events = [e async for e in loop.act("dispatch a writeable subagent")]
         tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
 
         assert len(tool_results) == 1
         assert PLAN_MODE_ERROR in (tool_results[0].error or "")
+
+    @pytest.mark.asyncio
+    async def test_task_to_safe_subagent_allowed_in_plan_mode(self) -> None:
+        """Task → SAFE-safety subagent (explore) IS allowed in plan mode.
+        The subagent is read-only by construction, so dispatching it can't
+        violate the plan-mode invariant. Lets the LLM run parallel deep
+        code research from inside plan mode (CC's "Phase 1" workflow).
+        """
+        backend = FakeBackend([
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="task",
+                                arguments=json.dumps({
+                                    "agent": "explore",
+                                    "task": "find every place X is used",
+                                }),
+                            ),
+                        )
+                    ]
+                )
+            ],
+            # Subagent run within Task; FakeBackend returns the same script
+            # for all backend.complete() calls if the streams are exhausted.
+            [mock_llm_chunk(content="exploration done")],
+            [mock_llm_chunk(content="parent done")],
+        ])
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=backend
+        )
+
+        events = [e async for e in loop.act("research X")]
+        tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
+
+        assert len(tool_results) == 1
+        # Gate must NOT fire — the SAFE subagent is allowlisted.
+        assert PLAN_MODE_ERROR not in (tool_results[0].error or ""), (
+            f"task→explore must pass plan-mode gate; got error: "
+            f"{tool_results[0].error!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_read_only_bash_allowed_in_plan_mode(self) -> None:
@@ -586,3 +629,92 @@ class TestAutoPlanConfirmPopup:
 
 async def _drain(agen):
     return [e async for e in agen]
+
+
+class TestMiddlewareInjectAfterTool:
+    """When middleware wants to INJECT a user-role message but the last
+    message in history is `tool`, the previous behaviour was to silently
+    drop it (vLLM rejects role 'user' immediately after role 'tool').
+    In tool-heavy plan-mode sessions this killed every sparse reminder.
+    Fix: prepend a synthetic assistant ack so the role sequence stays
+    valid, then inject the user message.
+    """
+
+    @pytest.mark.asyncio
+    async def test_inject_after_tool_prepends_assistant_ack(self) -> None:
+        from vibe.core.middleware import MiddlewareAction, MiddlewareResult
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config,
+            agent_name=BuiltinAgentName.AUTO_APPROVE,
+            backend=FakeBackend([]),
+        )
+
+        # Construct: ..., assistant(tool_call), tool(result)
+        from vibe.core.types import LLMMessage as _Msg
+
+        loop.messages.reset([
+            loop.messages[0],  # system
+            _Msg(role=Role.user, content="run something"),
+            _Msg(
+                role=Role.assistant,
+                content="ok",
+                tool_calls=[ToolCall(
+                    id="tc1",
+                    index=0,
+                    function=FunctionCall(name="read_file", arguments="{}"),
+                )],
+            ),
+            _Msg(role=Role.tool, tool_call_id="tc1", name="read_file", content="result"),
+        ])
+        starting_len = len(loop.messages)
+
+        # Drive the inject path directly.
+        result = MiddlewareResult(
+            action=MiddlewareAction.INJECT_MESSAGE, message="<reminder>still active</reminder>"
+        )
+        async for _ in loop._handle_middleware_result(result):
+            pass
+
+        # The reminder must have been injected — not silently dropped.
+        assert len(loop.messages) == starting_len + 2, (
+            f"Expected +2 (assistant ack + user reminder); got "
+            f"+{len(loop.messages) - starting_len}"
+        )
+        # Middle slot is the synthetic assistant ack; last is the reminder.
+        ack = loop.messages[-2]
+        reminder = loop.messages[-1]
+        assert ack.role == Role.assistant, f"expected assistant ack, got {ack.role}"
+        assert reminder.role == Role.user
+        assert "still active" in (reminder.content or "")
+
+    @pytest.mark.asyncio
+    async def test_inject_when_last_is_assistant_does_not_prepend(self) -> None:
+        """Regression: don't add an assistant ack when the role sequence is
+        already valid (last message is assistant or user)."""
+        from vibe.core.middleware import MiddlewareAction, MiddlewareResult
+        from vibe.core.types import LLMMessage as _Msg
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config,
+            agent_name=BuiltinAgentName.AUTO_APPROVE,
+            backend=FakeBackend([]),
+        )
+        loop.messages.reset([
+            loop.messages[0],
+            _Msg(role=Role.user, content="hi"),
+            _Msg(role=Role.assistant, content="hello"),
+        ])
+        starting_len = len(loop.messages)
+
+        result = MiddlewareResult(
+            action=MiddlewareAction.INJECT_MESSAGE, message="<reminder>x</reminder>"
+        )
+        async for _ in loop._handle_middleware_result(result):
+            pass
+
+        # Only the user reminder is appended; no synthetic ack needed.
+        assert len(loop.messages) == starting_len + 1
+        assert loop.messages[-1].role == Role.user

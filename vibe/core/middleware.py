@@ -134,7 +134,7 @@ Build your plan incrementally by writing to or editing this file.
 This is the only file you are allowed to edit. Make sure to create it early and edit as soon as you internally update your plan.
 
 ## Instructions
-1. Research the user's query using read-only tools (grep, read_file, etc.)
+1. Research the user's query using read-only tools (grep, read_file, etc.). For deep / parallel code search, dispatch read-only `task` subagents (e.g. `agent: "explore"`) — multiple in parallel if you need to investigate several areas at once.
 2. If you are unsure about requirements or approach, use the ask_user_question tool to clarify before finalizing your plan
 3. Write your plan to the plan file above. The user will be prompted to approve and start implementation as soon as your turn ends after the write — you do NOT need to call any tool to trigger that. Just stop emitting tool_calls when the plan is complete.</{VIBE_WARNING_TAG}>"""
 

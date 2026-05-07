@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from vibe.cli.terminal_detect import detect_terminal
 from vibe.core.agents.manager import AgentManager
-from vibe.core.agents.models import AgentProfile, BuiltinAgentName
+from vibe.core.agents.models import AgentProfile, AgentSafety, BuiltinAgentName
 from vibe.core.compact.micro import MicroCompactMiddleware
 from vibe.core.config import ModelConfig, ProviderConfig, VibeConfig
 from vibe.core.hooks.manager import HooksManager
@@ -819,19 +819,28 @@ class AgentLoop:
             case MiddlewareAction.INJECT_MESSAGE:
                 if result.message:
                     # Strict backends (Mistral via vLLM) reject [tool, user]
-                    # sequences with a 400. Middleware injects a Role.user
-                    # message; if the previous message is a tool result, an
-                    # assistant turn must come first. Skip silently — the
-                    # middleware will get another shot once the assistant
-                    # responds. (Sparse reminders are sparse by design;
-                    # missing one occurrence is acceptable.)
+                    # sequences with a 400. When the last message is a tool
+                    # result, prepend a synthetic assistant ack so the role
+                    # sequence stays valid before the user-role reminder.
+                    # Earlier the inject was silently dropped here, but in
+                    # tool-heavy plan-mode sessions every sparse reminder
+                    # ends up landing right after a tool message, so
+                    # dropping silently meant they NEVER fired in practice.
                     if self.messages and self.messages[-1].role == Role.tool:
-                        pass
-                    else:
-                        injected_message = LLMMessage(
-                            role=Role.user, content=result.message, injected=True
+                        self.messages.append(
+                            LLMMessage(
+                                role=Role.assistant,
+                                content=str(
+                                    get_user_cancellation_message(
+                                        CancellationReason.OPERATION_CANCELLED
+                                    )
+                                ),
+                            )
                         )
-                        self.messages.append(injected_message)
+                    injected_message = LLMMessage(
+                        role=Role.user, content=result.message, injected=True
+                    )
+                    self.messages.append(injected_message)
 
             case MiddlewareAction.COMPACT:
                 old_tokens = result.metadata.get(
@@ -1130,15 +1139,20 @@ class AgentLoop:
             return
 
         # Plan-mode write gate: block tools that mutate state when the active
-        # agent profile is PLAN. Carve-out: a small set of tools
-        # (_PLAN_GATE_BYPASS_TOOLS) may bypass when their resolve_permission
-        # returns ALWAYS — the PLAN profile narrows each of those tools to a
-        # specific allowlist:
-        #   * write_file / search_replace → plan-file path allowlist
-        #   * bash → read-only command allowlist (ls, find, grep, git log…)
-        # so an ALWAYS verdict from those tools always means "PLAN explicitly
-        # permits this". Other mutating tools (Task, MCP, etc.) stay blocked
-        # in plan mode regardless of their resolve_permission outcome.
+        # agent profile is PLAN. Two carve-outs:
+        # 1. Tools in _PLAN_GATE_BYPASS_TOOLS may bypass when their
+        #    resolve_permission returns ALWAYS — the PLAN profile narrows
+        #    each of those tools to a specific allowlist:
+        #      * write_file / search_replace → plan-file path allowlist
+        #      * bash → read-only command allowlist (ls, find, grep, git log…)
+        #    so an ALWAYS verdict from those tools always means "PLAN
+        #    explicitly permits this".
+        # 2. The `task` tool may dispatch a subagent whose AgentProfile has
+        #    safety=SAFE (e.g. the read-only `explore` builtin). The
+        #    subagent itself can't violate the plan-mode invariant by
+        #    construction. Lets the LLM run deep parallel code research
+        #    while planning (CC's "Phase 1" Explore workflow).
+        # Other mutating tools (MCP, non-SAFE Task targets) stay blocked.
         # The substring "[Plan mode: write operations disabled]" is part of
         # the contract; tests substring-match on it.
         if (
@@ -1158,6 +1172,21 @@ class AgentLoop:
                     permission_ctx is not None
                     and permission_ctx.permission == ToolPermission.ALWAYS
                 )
+            elif tool_call.tool_name == "task":
+                target_agent_name = getattr(
+                    tool_call.validated_args, "agent", None
+                )
+                if target_agent_name:
+                    try:
+                        target_profile = self.agent_manager.get_agent(
+                            target_agent_name
+                        )
+                    except Exception:
+                        target_profile = None
+                    allowlisted = (
+                        target_profile is not None
+                        and target_profile.safety == AgentSafety.SAFE
+                    )
             if not allowlisted:
                 yield self._tool_failure_event(
                     tool_call,
