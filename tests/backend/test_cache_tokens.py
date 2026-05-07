@@ -56,3 +56,30 @@ def test_generic_prompt_tokens_details_null_defaults_to_zero() -> None:
     chunk = adapter.parse_response(data, _provider())
     assert chunk.usage is not None
     assert chunk.usage.cached_prompt_tokens == 0
+
+
+def test_anthropic_maps_cache_read_to_cached_prompt_tokens() -> None:
+    """cache_read counts as a cache hit; cache_creation does not."""
+    from vibe.core.llm.backend.anthropic import _build_usage_from_message_response
+
+    data = {
+        "usage": {
+            "input_tokens": 50,
+            "cache_creation_input_tokens": 200,
+            "cache_read_input_tokens": 1800,
+            "output_tokens": 30,
+        },
+    }
+    usage = _build_usage_from_message_response(data)
+    assert usage.prompt_tokens == 50 + 200 + 1800
+    assert usage.completion_tokens == 30
+    assert usage.cached_prompt_tokens == 1800  # cache_read only
+
+
+def test_anthropic_cache_fields_missing_defaults_to_zero() -> None:
+    from vibe.core.llm.backend.anthropic import _build_usage_from_message_response
+
+    data = {"usage": {"input_tokens": 100, "output_tokens": 5}}
+    usage = _build_usage_from_message_response(data)
+    assert usage.prompt_tokens == 100
+    assert usage.cached_prompt_tokens == 0

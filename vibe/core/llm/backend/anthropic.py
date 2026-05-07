@@ -19,6 +19,20 @@ from vibe.core.types import (
 )
 
 
+def _build_usage_from_message_response(data: dict[str, Any]) -> LLMUsage:
+    usage_data = data.get("usage", {})
+    total_input_tokens = (
+        usage_data.get("input_tokens", 0)
+        + usage_data.get("cache_creation_input_tokens", 0)
+        + usage_data.get("cache_read_input_tokens", 0)
+    )
+    return LLMUsage(
+        prompt_tokens=total_input_tokens,
+        completion_tokens=usage_data.get("output_tokens", 0),
+        cached_prompt_tokens=usage_data.get("cache_read_input_tokens", 0),
+    )
+
+
 class AnthropicMapper:
     """Shared mapper for converting messages to/from Anthropic API format."""
 
@@ -156,17 +170,7 @@ class AnthropicMapper:
                     )
                 )
 
-        usage_data = data.get("usage", {})
-        # Total input tokens = input_tokens + cache_creation + cache_read
-        total_input_tokens = (
-            usage_data.get("input_tokens", 0)
-            + usage_data.get("cache_creation_input_tokens", 0)
-            + usage_data.get("cache_read_input_tokens", 0)
-        )
-        usage = LLMUsage(
-            prompt_tokens=total_input_tokens,
-            completion_tokens=usage_data.get("output_tokens", 0),
-        )
+        usage = _build_usage_from_message_response(data)
 
         return LLMChunk(
             message=LLMMessage(
@@ -287,18 +291,11 @@ class AnthropicMapper:
         self, data: dict[str, Any], current_index: int
     ) -> tuple[LLMChunk | None, int]:
         message = data.get("message", {})
-        usage_data = message.get("usage", {})
-        if not usage_data:
+        if not message.get("usage"):
             return None, current_index
-        # Total input tokens = input_tokens + cache_creation + cache_read
-        total_input_tokens = (
-            usage_data.get("input_tokens", 0)
-            + usage_data.get("cache_creation_input_tokens", 0)
-            + usage_data.get("cache_read_input_tokens", 0)
-        )
         chunk = LLMChunk(
             message=LLMMessage(role=Role.assistant),
-            usage=LLMUsage(prompt_tokens=total_input_tokens, completion_tokens=0),
+            usage=_build_usage_from_message_response(message),
         )
         return chunk, current_index
 
@@ -554,17 +551,11 @@ class AnthropicAdapter(APIAdapter):
 
     def _parse_message_start(self, data: dict[str, Any]) -> LLMChunk:
         message = data.get("message", {})
-        usage_data = message.get("usage", {})
-        if not usage_data:
+        if not message.get("usage"):
             return LLMChunk(message=LLMMessage(role=Role.assistant, content=None))
-        total_input_tokens = (
-            usage_data.get("input_tokens", 0)
-            + usage_data.get("cache_creation_input_tokens", 0)
-            + usage_data.get("cache_read_input_tokens", 0)
-        )
         return LLMChunk(
             message=LLMMessage(role=Role.assistant, content=None),
-            usage=LLMUsage(prompt_tokens=total_input_tokens, completion_tokens=0),
+            usage=_build_usage_from_message_response(message),
         )
 
     def _parse_content_block_start(self, data: dict[str, Any]) -> LLMChunk | None:
