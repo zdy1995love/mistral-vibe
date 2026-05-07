@@ -32,6 +32,16 @@ _EMPTY_USAGE = LLMUsage(prompt_tokens=0, completion_tokens=0)
 class _ResponsesUsageData(TypedDict, total=False):
     input_tokens: int
     output_tokens: int
+    input_tokens_details: dict[str, Any]
+
+
+def _build_usage(usage: _ResponsesUsageData | dict[str, Any]) -> LLMUsage:
+    details = usage.get("input_tokens_details") or {}
+    return LLMUsage(
+        prompt_tokens=usage.get("input_tokens", 0),
+        completion_tokens=usage.get("output_tokens", 0),
+        cached_prompt_tokens=details.get("cached_tokens", 0),
+    )
 
 
 class _ResponsesFunctionCallItem(TypedDict, total=False):
@@ -128,11 +138,7 @@ class _OpenAIResponsesStreamParser:
 
     @staticmethod
     def _usage_from_response(usage_data: _ResponsesUsageData | None) -> LLMUsage:
-        usage = usage_data or {}
-        return LLMUsage(
-            prompt_tokens=usage.get("input_tokens", 0),
-            completion_tokens=usage.get("output_tokens", 0),
-        )
+        return _build_usage(usage_data or {})
 
     @staticmethod
     def _reasoning_state_from_output(output: list[dict[str, Any]]) -> list[str] | None:

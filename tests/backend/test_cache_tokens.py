@@ -83,3 +83,23 @@ def test_anthropic_cache_fields_missing_defaults_to_zero() -> None:
     usage = _build_usage_from_message_response(data)
     assert usage.prompt_tokens == 100
     assert usage.cached_prompt_tokens == 0
+
+
+def test_openai_responses_extracts_cached_tokens() -> None:
+    from vibe.core.llm.backend.openai_responses import _build_usage
+
+    usage = _build_usage({
+        "input_tokens": 1000,
+        "output_tokens": 20,
+        "input_tokens_details": {"cached_tokens": 850},
+    })
+    assert usage.prompt_tokens == 1000
+    assert usage.completion_tokens == 20
+    assert usage.cached_prompt_tokens == 850
+
+
+def test_openai_responses_missing_details_defaults_to_zero() -> None:
+    from vibe.core.llm.backend.openai_responses import _build_usage
+
+    usage = _build_usage({"input_tokens": 100, "output_tokens": 5})
+    assert usage.cached_prompt_tokens == 0
