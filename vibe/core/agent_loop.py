@@ -253,45 +253,21 @@ def _generate_synthetic_tool_call_id() -> str:
     return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(9))
 
 
-def _promote_inline_tool_calls(
-    message: LLMMessage, available_tool_names: set[str]
-) -> LLMMessage:
-    """Synthesize a structured tool_call from inline ``<name>{<json>}`` text
-    at the very end of ``message.content`` when the model emitted a tool
-    call without the ``[TOOL_CALLS]`` BOT marker.
+def _match_trailing_inline_tool_call(
+    stripped: str, available_tool_names: set[str]
+) -> tuple[int, str, str] | None:
+    """Match a single ``<name>{<balanced_json>}`` at the tail of ``stripped``.
 
-    Background: under reasoning_effort=high in long contexts, Mistral-style
-    models occasionally drop the ``[TOOL_CALLS]`` special token and write
-    the call as bare text at content's tail. With no structured tool_calls
-    in the response, the agent loop stalls — no tool gets dispatched. This
-    helper recovers by pattern-matching the suffix.
-
-    Conservative gates to avoid promoting legitimate prose that happens to
-    contain ``name{...}``-shaped text:
-      1. ``message.tool_calls`` must be empty (don't override real calls).
-      2. ``content`` must end with ``}`` (after rstrip).
-      3. ``<name>`` must be in ``available_tool_names``.
-      4. ``<name>`` must be on a word boundary (no leading identifier char).
-      5. The JSON, parsed via ``raw_decode``, must consume the entire suffix
-         starting at ``{`` — no trailing text after ``}``.
-      6. Parsed JSON must be an object (dict), not array/literal.
-
-    Returns a new message with the suffix stripped from content and a
-    synthetic tool_call appended; or the original message unchanged if no
-    promotion applies.
+    Returns ``(idx, name, args_json)`` where ``idx`` is the start of
+    ``<name>``, or ``None`` if no valid match. Conservative gates:
+    word-boundary before ``<name>``, JSON parses cleanly via ``raw_decode``
+    consuming the entire suffix, JSON is an object (not array/literal).
     """
-    if message.tool_calls:
-        return message
-    content = message.content
-    if not content or not available_tool_names:
-        return message
-    stripped = content.rstrip()
     if not stripped.endswith("}"):
-        return message
-
+        return None
+    decoder = json.JSONDecoder()
     # Try longer names first so a tool named ``write_file`` is preferred
     # over one named ``write`` if both happen to match.
-    decoder = json.JSONDecoder()
     for name in sorted(available_tool_names, key=len, reverse=True):
         marker = name + "{"
         idx = stripped.rfind(marker)
@@ -311,17 +287,75 @@ def _promote_inline_tool_calls(
             continue  # extra chars after the JSON close
         if not isinstance(parsed, dict):
             continue
+        return (idx, name, candidate)
+    return None
 
-        new_content = stripped[:idx].rstrip() or None
-        synthetic = ToolCall(
+
+def _promote_inline_tool_calls(
+    message: LLMMessage, available_tool_names: set[str]
+) -> LLMMessage:
+    """Synthesize structured ``tool_calls`` from inline ``<name>{<json>}``
+    segments at the tail of ``message.content`` when the model emitted tool
+    calls without the ``[TOOL_CALLS]`` BOT marker.
+
+    Background: under reasoning_effort=high in long contexts, Mistral-style
+    models occasionally drop the ``[TOOL_CALLS]`` special token and write
+    one *or more* back-to-back calls as bare text. With no structured
+    tool_calls in the response, the agent loop stalls and the leaked text
+    gets persisted to history — which (a) renders as garbage to the user
+    and (b) reinforces the malformed pattern when sent back to vLLM. This
+    helper recovers by peeling matching suffixes from the tail until none
+    remain, then promoting each to a structured ``ToolCall``.
+
+    Conservative gates to avoid promoting legitimate prose that happens to
+    contain ``name{...}``-shaped text:
+      1. ``message.tool_calls`` must be empty (don't override real calls).
+      2. ``content`` must end with ``}`` (after rstrip).
+      3. ``<name>`` must be in ``available_tool_names``.
+      4. ``<name>`` must be on a word boundary (no leading identifier char).
+      5. The JSON, parsed via ``raw_decode``, must consume the entire suffix
+         starting at ``{`` — no trailing text after ``}``.
+      6. Parsed JSON must be an object (dict), not array/literal.
+
+    Returns a new message with all peeled suffixes stripped from content
+    and N synthetic tool_calls appended (in original order, sequential
+    indices 0..N-1); or the original message unchanged if no promotion
+    applies. If peeling stops mid-content (e.g. the next-to-be-peeled
+    segment isn't a whitelisted call), only the trailing valid run is
+    promoted; leading content is preserved verbatim.
+    """
+    if message.tool_calls:
+        return message
+    content = message.content
+    if not content or not available_tool_names:
+        return message
+
+    stripped = content.rstrip()
+    records: list[tuple[str, str]] = []  # (name, args_json), tail-to-head order
+    while True:
+        match = _match_trailing_inline_tool_call(stripped, available_tool_names)
+        if match is None:
+            break
+        idx, name, args_json = match
+        records.append((name, args_json))
+        stripped = stripped[:idx].rstrip()
+
+    if not records:
+        return message
+
+    records.reverse()
+    synthetic_calls = [
+        ToolCall(
             id=_generate_synthetic_tool_call_id(),
-            index=0,
-            function=FunctionCall(name=name, arguments=candidate),
+            index=i,
+            function=FunctionCall(name=name, arguments=args_json),
         )
-        return message.model_copy(
-            update={"content": new_content, "tool_calls": [synthetic]}
-        )
-    return message
+        for i, (name, args_json) in enumerate(records)
+    ]
+    new_content = stripped or None
+    return message.model_copy(
+        update={"content": new_content, "tool_calls": synthetic_calls}
+    )
 
 
 def requires_init(fn: Callable[..., Any]) -> Callable[..., Any]:

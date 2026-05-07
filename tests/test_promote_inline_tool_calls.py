@@ -116,3 +116,72 @@ class TestPromoteInlineToolCalls:
         assert "/home/zdy/.vibe/plans" in out.tool_calls[0].function.arguments
         assert out.content is not None and "Microcompact" in out.content
         assert "write_file{" not in out.content
+
+    def test_promotes_multiple_back_to_back_inline_calls(self) -> None:
+        """Verbatim repro of session_20260507_070814: model emits three
+        ``read_file{<json>}`` segments back-to-back with no [TOOL_CALLS]
+        BOT marker. Old behavior promoted only the trailing one; the
+        leading two leaked into content and got persisted to history,
+        which (a) printed garbage to the user and (b) reinforced the
+        malformed pattern when sent back to vLLM.
+        """
+        content = (
+            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/middleware.py"}'
+            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/agent_loop.py", "limit": 100}'
+            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/tools/base.py"}'
+        )
+        msg = _msg(content)
+        out = _promote_inline_tool_calls(msg, {"read_file", "write_file", "bash"})
+        assert out.tool_calls is not None
+        assert len(out.tool_calls) == 3
+        names = [tc.function.name for tc in out.tool_calls]
+        assert names == ["read_file", "read_file", "read_file"]
+        # Order preserved: middleware.py first, then agent_loop.py, then base.py.
+        args = [tc.function.arguments for tc in out.tool_calls]
+        assert "middleware.py" in args[0]
+        assert "agent_loop.py" in args[1] and '"limit": 100' in args[1]
+        assert "tools/base.py" in args[2]
+        # No leaked inline text remains in content.
+        assert out.content is None
+        # Sequential indices so downstream consumers can order them.
+        assert [tc.index for tc in out.tool_calls] == [0, 1, 2]
+        # Distinct synthetic ids (Mistral requires 9-char alnum, all unique).
+        ids = [tc.id for tc in out.tool_calls]
+        assert len(set(ids)) == 3
+        assert all(len(i) == 9 and i.isalnum() for i in ids)
+
+    def test_promotes_multiple_with_prose_prefix(self) -> None:
+        """Prose followed by N inline calls: prose stays in content,
+        all N calls get promoted.
+        """
+        content = (
+            "Reading the three files now.\n\n"
+            'read_file{"path": "/a"}'
+            'read_file{"path": "/b"}'
+        )
+        msg = _msg(content)
+        out = _promote_inline_tool_calls(msg, {"read_file"})
+        assert out.tool_calls is not None and len(out.tool_calls) == 2
+        assert out.content == "Reading the three files now."
+        assert "read_file{" not in out.content
+
+    def test_invalid_middle_run_only_promotes_trailing_valid_run(self) -> None:
+        """If we hit something that's not a valid <name>{<json>} segment
+        while peeling backwards, we stop. The trailing valid run gets
+        promoted; the leading garbage stays in content. This is the
+        conservative choice — better to leave one weird artifact in
+        content than to mis-parse the boundary.
+        """
+        content = (
+            'garbage_prefix_text '
+            'unknown_tool{"x": 1}'  # not in whitelist → blocks further peeling
+            'read_file{"path": "/a"}'
+            'read_file{"path": "/b"}'
+        )
+        msg = _msg(content)
+        out = _promote_inline_tool_calls(msg, {"read_file"})
+        assert out.tool_calls is not None and len(out.tool_calls) == 2
+        assert out.content is not None
+        assert "unknown_tool{" in out.content
+        assert "garbage_prefix_text" in out.content
+        assert "read_file{" not in out.content
