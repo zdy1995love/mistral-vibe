@@ -205,9 +205,8 @@ class TestRecentPlanFallback:
     async def test_fallback_picks_recent_plan_file_when_ctx_missing(
         self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
     ) -> None:
-        # Drop a fresh plan file in PLANS_DIR (cwd-relative). conftest.py
-        # chdirs to a tmp dir per test, so PLANS_DIR is <test_cwd>/.vibe/plans.
-        plans_dir = Path.cwd() / ".vibe" / "plans"
+        from vibe.core.paths import PLANS_DIR
+        plans_dir = PLANS_DIR.path
         plans_dir.mkdir(parents=True, exist_ok=True)
         recent = plans_dir / "1700000000-fresh-bright-stone.md"
         recent.write_text("# My Plan\nReal content.\n")
@@ -231,12 +230,13 @@ class TestRecentPlanFallback:
         self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
     ) -> None:
         import os
-        plans_dir = Path.cwd() / ".vibe" / "plans"
+        from vibe.core.paths import PLANS_DIR
+        plans_dir = PLANS_DIR.path
         plans_dir.mkdir(parents=True, exist_ok=True)
         old = plans_dir / "1700000000-old-aged-stone.md"
         old.write_text("# stale\n")
-        # Backdate mtime to >1 hour ago
-        old_ts = old.stat().st_mtime - 7200
+        # Backdate mtime to >24h ago (outside the fallback window)
+        old_ts = old.stat().st_mtime - 25 * 3600
         os.utime(old, (old_ts, old_ts))
 
         ctx = InvokeContext(
@@ -252,7 +252,8 @@ class TestRecentPlanFallback:
     async def test_fallback_ignores_non_pattern_files(
         self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
     ) -> None:
-        plans_dir = Path.cwd() / ".vibe" / "plans"
+        from vibe.core.paths import PLANS_DIR
+        plans_dir = PLANS_DIR.path
         plans_dir.mkdir(parents=True, exist_ok=True)
         bogus = plans_dir / "notes.md"  # doesn't match <ts>-<slug>.md
         bogus.write_text("# Notes\n")

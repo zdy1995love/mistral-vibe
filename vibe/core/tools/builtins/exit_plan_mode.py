@@ -29,7 +29,7 @@ from vibe.core.tools.ui import ToolCallDisplay, ToolResultDisplay, ToolUIData
 from vibe.core.utils.io import read_safe
 
 _PLAN_FILE_PATTERN = re.compile(r"^\d{10}-[a-z]+(?:-[a-z]+){2,}\.md$")
-_FALLBACK_RECENT_WINDOW_S = 3600  # 1 hour
+_FALLBACK_RECENT_WINDOW_S = 24 * 3600  # 24 hours
 
 
 def _find_recent_plan_file() -> Path | None:

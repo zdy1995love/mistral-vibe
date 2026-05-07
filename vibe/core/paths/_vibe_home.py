@@ -33,10 +33,15 @@ LOG_DIR = GlobalPath(lambda: VIBE_HOME.path / "logs")
 LOG_FILE = GlobalPath(lambda: VIBE_HOME.path / "logs" / "vibe.log")
 CACHE_FILE = GlobalPath(lambda: VIBE_HOME.path / "cache.toml")
 HISTORY_FILE = GlobalPath(lambda: VIBE_HOME.path / "vibehistory")
-# PLANS_DIR is project-local, not under VIBE_HOME — plans co-locate with the
-# code they describe so multiple projects don't collide and a plan stays with
-# its repo. Resolved from cwd at access time; stable for the duration of a
-# session because vibe-cli doesn't chdir.
-PLANS_DIR = GlobalPath(lambda: Path.cwd() / ".vibe" / "plans")
+# PLANS_DIR lives under VIBE_HOME (not cwd). Earlier the design was
+# cwd-relative — "plans co-locate with the code they describe" — but
+# `_plan_overrides()` runs at module import time (capturing cwd before
+# any cli chdir) while `PlanSession.plan_file_path` lazy-initialises at
+# first reminder injection. In some sessions those two cwds drifted,
+# producing a stale `ctx.plan_file_path` in `exit_plan_mode` even though
+# the file existed on disk. Plans are a transient artifact (consumed
+# once on fork-to-dev), so the loss of project co-location is acceptable
+# in exchange for cwd-independence and uniformity with sessions/ + logs/.
+PLANS_DIR = GlobalPath(lambda: VIBE_HOME.path / "plans")
 
 DEFAULT_TOOL_DIR = GlobalPath(lambda: VIBE_ROOT / "core" / "tools" / "builtins")

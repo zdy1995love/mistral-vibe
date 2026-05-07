@@ -71,8 +71,6 @@ def config_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Path:
-    # Depend on tmp_working_directory so cwd is set before _plan_overrides()
-    # captures it — PLANS_DIR is now cwd-relative, so the order matters.
     tmp_path = tmp_path_factory.mktemp("vibe")
     config_dir = tmp_path / ".vibe"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -81,7 +79,9 @@ def config_dir(
 
     monkeypatch.setattr("vibe.core.paths._vibe_home._DEFAULT_VIBE_HOME", config_dir)
 
-    # Re-evaluate PLAN agent overrides so the allowlist uses the per-test cwd
+    # Re-evaluate PLAN agent overrides so the allowlist uses the per-test
+    # VIBE_HOME (just monkeypatched above). PLAN is built at import time
+    # against the un-patched home, so we rebuild here.
     from vibe.core.agents.models import PLAN, _plan_overrides
 
     object.__setattr__(PLAN, "overrides", _plan_overrides())
