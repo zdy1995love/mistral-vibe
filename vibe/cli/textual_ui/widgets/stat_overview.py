@@ -83,11 +83,7 @@ def render_stat_overview(stats: AgentStats, max_context: int) -> RenderableType:
     session_col.add_row("Cached", _fmt_int(stats.session_cached_tokens), cache_suffix)
     session_col.add_row("Output", _fmt_int(stats.session_completion_tokens), "")
 
-    cost = (
-        stats.session_prompt_tokens / 1_000_000 * stats.input_price_per_million
-        + stats.session_completion_tokens / 1_000_000 * stats.output_price_per_million
-    )
-    session_col.add_row("Cost", _fmt_cost(cost), "")
+    session_col.add_row("Cost", _fmt_cost(stats.session_cost), "")
 
     last_col = Table.grid(padding=(0, 1))
     last_col.add_column(style="bold")

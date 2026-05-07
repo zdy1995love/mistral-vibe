@@ -50,6 +50,14 @@ def test_overview_renders_session_and_last_turn_columns() -> None:
     assert "88%" in out
 
 
+def test_fmt_cost_branches() -> None:
+    from vibe.cli.textual_ui.widgets.stat_overview import _fmt_cost
+
+    assert _fmt_cost(0.0037) == "$0.0037"
+    assert _fmt_cost(1.5) == "$1.50"
+    assert _fmt_cost(123.456) == "$123.46"
+
+
 def test_overview_no_max_context_skips_bar() -> None:
     stats = AgentStats(
         steps=1, context_tokens=500,
