@@ -121,7 +121,7 @@ class CommandRegistry:
                 exits=True,
             ),
             "stat": Command(
-                aliases=frozenset(["/stat", "/status", "/statistics"]),
+                aliases=frozenset(["/stat", "/status"]),
                 description="Display session statistics. Pass 'timeline' for per-turn breakdown",
                 handler="_show_stat",
             ),
