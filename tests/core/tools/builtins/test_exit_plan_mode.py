@@ -194,6 +194,79 @@ class TestErrorCases:
             await collect_result(tool.run(ExitPlanModeArgs(), ctx))
 
 
+class TestRecentPlanFallback:
+    """If ctx.plan_file_path is missing-on-disk but a recent <ts>-<slug>.md
+    sits in PLANS_DIR (cwd-relative), exit_plan_mode falls back to it
+    instead of raising. Recovers from the path-drift bug where
+    PlanSession's cached path mismatches what the LLM actually wrote.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fallback_picks_recent_plan_file_when_ctx_missing(
+        self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
+    ) -> None:
+        # Drop a fresh plan file in PLANS_DIR (cwd-relative). conftest.py
+        # chdirs to a tmp dir per test, so PLANS_DIR is <test_cwd>/.vibe/plans.
+        plans_dir = Path.cwd() / ".vibe" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        recent = plans_dir / "1700000000-fresh-bright-stone.md"
+        recent.write_text("# My Plan\nReal content.\n")
+
+        fork_cb = MockForkToDevCallback()
+        ctx = InvokeContext(
+            tool_call_id="t1",
+            agent_manager=plan_manager,  # type: ignore[arg-type]
+            user_input_callback=MockCallback(_yes_auto()),
+            plan_file_path=tmp_path / "stale-cached-path.md",  # doesn't exist
+            request_fork_to_dev_callback=fork_cb,
+        )
+        result = await collect_result(tool.run(ExitPlanModeArgs(), ctx))
+        assert result.switched is True
+        plan_text, plan_path, _profile = fork_cb.calls[0]
+        assert plan_path == recent
+        assert "My Plan" in plan_text
+
+    @pytest.mark.asyncio
+    async def test_fallback_skips_old_files_outside_window(
+        self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
+    ) -> None:
+        import os
+        plans_dir = Path.cwd() / ".vibe" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        old = plans_dir / "1700000000-old-aged-stone.md"
+        old.write_text("# stale\n")
+        # Backdate mtime to >1 hour ago
+        old_ts = old.stat().st_mtime - 7200
+        os.utime(old, (old_ts, old_ts))
+
+        ctx = InvokeContext(
+            tool_call_id="t1",
+            agent_manager=plan_manager,  # type: ignore[arg-type]
+            user_input_callback=MockCallback(_yes_auto()),
+            plan_file_path=tmp_path / "stale-cached-path.md",
+        )
+        with pytest.raises(ToolError, match="No plan file found"):
+            await collect_result(tool.run(ExitPlanModeArgs(), ctx))
+
+    @pytest.mark.asyncio
+    async def test_fallback_ignores_non_pattern_files(
+        self, tool: ExitPlanMode, plan_manager: MockAgentManager, tmp_path: Path
+    ) -> None:
+        plans_dir = Path.cwd() / ".vibe" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        bogus = plans_dir / "notes.md"  # doesn't match <ts>-<slug>.md
+        bogus.write_text("# Notes\n")
+
+        ctx = InvokeContext(
+            tool_call_id="t1",
+            agent_manager=plan_manager,  # type: ignore[arg-type]
+            user_input_callback=MockCallback(_yes_auto()),
+            plan_file_path=tmp_path / "stale-cached-path.md",
+        )
+        with pytest.raises(ToolError, match="No plan file found"):
+            await collect_result(tool.run(ExitPlanModeArgs(), ctx))
+
+
 class TestForkOnApproval:
     @pytest.mark.asyncio
     async def test_yes_auto_forks_to_accept_edits(

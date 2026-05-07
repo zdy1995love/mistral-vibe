@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import re
+import time
+from pathlib import Path
 from typing import ClassVar, cast
 
 from pydantic import BaseModel
 
 from vibe.core.agents.models import BuiltinAgentName
+from vibe.core.logger import logger
+from vibe.core.paths import PLANS_DIR
 from vibe.core.tools.base import (
     BaseTool,
     BaseToolConfig,
@@ -22,6 +27,37 @@ from vibe.core.tools.builtins.ask_user_question import (
 )
 from vibe.core.tools.ui import ToolCallDisplay, ToolResultDisplay, ToolUIData
 from vibe.core.utils.io import read_safe
+
+_PLAN_FILE_PATTERN = re.compile(r"^\d{10}-[a-z]+(?:-[a-z]+){2,}\.md$")
+_FALLBACK_RECENT_WINDOW_S = 3600  # 1 hour
+
+
+def _find_recent_plan_file() -> Path | None:
+    """Scan PLANS_DIR for a recent <ts>-<slug>.md file.
+
+    Returns the most-recently-modified plan file in the directory, but only
+    if it was modified within the last hour. Used as a defensive fallback
+    when `InvokeContext.plan_file_path` doesn't resolve to an existing file
+    — there are rare paths (long sessions, certain reset edge cases) where
+    the cached `PlanSession.plan_file_path` and the path the LLM actually
+    wrote to disagree, and we'd rather recover than block the user.
+    """
+    plans_dir = PLANS_DIR.path
+    if not plans_dir.is_dir():
+        return None
+    now = time.time()
+    candidates: list[tuple[float, Path]] = []
+    for entry in plans_dir.iterdir():
+        if not entry.is_file() or not _PLAN_FILE_PATTERN.match(entry.name):
+            continue
+        mtime = entry.stat().st_mtime
+        if now - mtime > _FALLBACK_RECENT_WINDOW_S:
+            continue
+        candidates.append((mtime, entry))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
 
 
 class ExitPlanModeArgs(BaseModel):
@@ -75,18 +111,29 @@ class ExitPlanMode(
         if ctx.user_input_callback is None:
             raise ToolError("ExitPlanMode requires an interactive UI.")
 
-        if ctx.plan_file_path is None or not ctx.plan_file_path.is_file():
-            raise ToolError(
-                "No plan file found. Write your plan to the plan-mode plan "
-                "file (path is in the plan-mode system reminder) before "
-                "calling ExitPlanMode."
+        plan_path = ctx.plan_file_path
+        if plan_path is None or not plan_path.is_file():
+            fallback = _find_recent_plan_file()
+            if fallback is None:
+                raise ToolError(
+                    "No plan file found. Write your plan to the plan-mode plan "
+                    "file (path is in the plan-mode system reminder) before "
+                    "calling ExitPlanMode."
+                )
+            logger.warning(
+                "exit_plan_mode: ctx.plan_file_path=%r missing on disk; "
+                "falling back to most-recent plan file %s (mtime within "
+                "%ss). This indicates PlanSession state drifted from the "
+                "filesystem; investigate if it recurs.",
+                str(plan_path) if plan_path else None,
+                fallback,
+                _FALLBACK_RECENT_WINDOW_S,
             )
+            plan_path = fallback
         try:
-            plan_content = read_safe(ctx.plan_file_path).text
+            plan_content = read_safe(plan_path).text
         except OSError as e:
-            raise ToolError(
-                f"Failed to read plan file at {ctx.plan_file_path}: {e}"
-            ) from e
+            raise ToolError(f"Failed to read plan file at {plan_path}: {e}") from e
         if not plan_content.strip():
             raise ToolError(
                 "Plan file is empty. Write the plan before calling ExitPlanMode."
@@ -158,7 +205,7 @@ class ExitPlanMode(
                 switched=False,
                 message=(
                     f"Staying in plan mode. User feedback: {answer.answer}\n"
-                    f"ACTION REQUIRED: update the plan file ({ctx.plan_file_path}) "
+                    f"ACTION REQUIRED: update the plan file ({plan_path}) "
                     f"with the requested changes using write_file or "
                     f"search_replace BEFORE calling exit_plan_mode again. "
                     f"Calling exit_plan_mode without addressing the feedback "
@@ -182,9 +229,7 @@ class ExitPlanMode(
             raise ToolError(
                 "Fork-to-dev not available in this context — cannot exit plan mode."
             )
-        ctx.request_fork_to_dev_callback(
-            plan_content, ctx.plan_file_path, target_profile
-        )
+        ctx.request_fork_to_dev_callback(plan_content, plan_path, target_profile)
         yield ExitPlanModeResult(
             switched=True,
             message=(f"Plan approved. Forking to {target_profile} with plan as seed."),
