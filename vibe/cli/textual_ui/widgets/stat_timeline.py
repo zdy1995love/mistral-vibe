@@ -89,7 +89,7 @@ class StatTimelineApp(Container):
         pass
 
     def __init__(self, stats: AgentStats, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+        super().__init__(id="stat-timeline-app", **kwargs)
         self._stats = stats
 
     def action_close(self) -> None:
