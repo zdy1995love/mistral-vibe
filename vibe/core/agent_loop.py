@@ -98,6 +98,7 @@ from vibe.core.types import (
     CompactEndEvent,
     CompactStartEvent,
     ContextTooLongError,
+    FunctionCall,
     LLMChunk,
     LLMMessage,
     LLMUsage,
@@ -229,6 +230,91 @@ def _is_non_retryable_error(e: BaseException) -> bool:
     # Wrapping such an exception in a plain RuntimeError strips the flag, so
     # Temporal's activity retry policy will retry the call until exhaustion.
     return bool(getattr(e, "non_retryable", False))
+
+
+def _generate_synthetic_tool_call_id() -> str:
+    """Random call_id matching the shape vLLM emits (9 alnum chars).
+
+    Used when promoting an inline-text tool call into a structured one
+    (`_promote_inline_tool_calls`) — the LLM never emitted a real id, so
+    we mint one. Length / alphabet picked to be visually indistinguishable
+    from real ids in logs.
+    """
+    import secrets
+    import string
+
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(9))
+
+
+def _promote_inline_tool_calls(
+    message: LLMMessage, available_tool_names: set[str]
+) -> LLMMessage:
+    """Synthesize a structured tool_call from inline ``<name>{<json>}`` text
+    at the very end of ``message.content`` when the model emitted a tool
+    call without the ``[TOOL_CALLS]`` BOT marker.
+
+    Background: under reasoning_effort=high in long contexts, Mistral-style
+    models occasionally drop the ``[TOOL_CALLS]`` special token and write
+    the call as bare text at content's tail. With no structured tool_calls
+    in the response, the agent loop stalls — no tool gets dispatched. This
+    helper recovers by pattern-matching the suffix.
+
+    Conservative gates to avoid promoting legitimate prose that happens to
+    contain ``name{...}``-shaped text:
+      1. ``message.tool_calls`` must be empty (don't override real calls).
+      2. ``content`` must end with ``}`` (after rstrip).
+      3. ``<name>`` must be in ``available_tool_names``.
+      4. ``<name>`` must be on a word boundary (no leading identifier char).
+      5. The JSON, parsed via ``raw_decode``, must consume the entire suffix
+         starting at ``{`` — no trailing text after ``}``.
+      6. Parsed JSON must be an object (dict), not array/literal.
+
+    Returns a new message with the suffix stripped from content and a
+    synthetic tool_call appended; or the original message unchanged if no
+    promotion applies.
+    """
+    if message.tool_calls:
+        return message
+    content = message.content
+    if not content or not available_tool_names:
+        return message
+    stripped = content.rstrip()
+    if not stripped.endswith("}"):
+        return message
+
+    # Try longer names first so a tool named ``write_file`` is preferred
+    # over one named ``write`` if both happen to match.
+    decoder = json.JSONDecoder()
+    for name in sorted(available_tool_names, key=len, reverse=True):
+        marker = name + "{"
+        idx = stripped.rfind(marker)
+        if idx < 0:
+            continue
+        if idx > 0:
+            prev = stripped[idx - 1]
+            if prev.isalnum() or prev == "_":
+                continue  # name is part of a longer identifier
+        json_start = idx + len(name)
+        candidate = stripped[json_start:]
+        try:
+            parsed, end_offset = decoder.raw_decode(candidate)
+        except json.JSONDecodeError:
+            continue
+        if end_offset != len(candidate):
+            continue  # extra chars after the JSON close
+        if not isinstance(parsed, dict):
+            continue
+
+        new_content = stripped[:idx].rstrip() or None
+        synthetic = ToolCall(
+            id=_generate_synthetic_tool_call_id(),
+            index=0,
+            function=FunctionCall(name=name, arguments=candidate),
+        )
+        return message.model_copy(
+            update={"content": new_content, "tool_calls": [synthetic]}
+        )
+    return message
 
 
 def requires_init(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1317,6 +1403,10 @@ class AgentLoop:
                 result.message
             )
             processed_message = _sanitize_tool_call_arguments(processed_message)
+            processed_message = _promote_inline_tool_calls(
+                processed_message,
+                {t.function.name for t in available_tools or []},
+            )
             self.messages.append(processed_message)
             return LLMChunk(message=processed_message, usage=result.usage)
 
@@ -1395,7 +1485,12 @@ class AgentLoop:
                 )
             self._update_stats(usage=usage, time_seconds=end_time - start_time)
 
-            self.messages.append(_sanitize_tool_call_arguments(chunk_agg.message))
+            stream_message = _sanitize_tool_call_arguments(chunk_agg.message)
+            stream_message = _promote_inline_tool_calls(
+                stream_message,
+                {t.function.name for t in available_tools or []},
+            )
+            self.messages.append(stream_message)
 
         except Exception as e:
             if _should_raise_rate_limit_error(e):

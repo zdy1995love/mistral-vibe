@@ -26,23 +26,60 @@ class ThinkTagExtractor:
         content_parts: list[str] = []
 
         while text:
-            target = self.CLOSE if self.in_think else self.OPEN
-            idx = text.find(target)
-            if idx >= 0:
-                pre = text[:idx]
-                (reasoning_parts if self.in_think else content_parts).append(pre)
-                text = text[idx + len(target) :]
-                self.in_think = not self.in_think
-                continue
+            if self.in_think:
+                # Inside a think block — only [/THINK] flips state.
+                idx = text.find(self.CLOSE)
+                if idx >= 0:
+                    reasoning_parts.append(text[:idx])
+                    text = text[idx + len(self.CLOSE) :]
+                    self.in_think = False
+                    continue
+                partial = self._longest_partial_suffix(text, self.CLOSE)
+                if partial:
+                    reasoning_parts.append(text[:-partial])
+                    self.pending = text[-partial:]
+                else:
+                    reasoning_parts.append(text)
+                break
 
-            partial = self._longest_partial_suffix(text, target)
-            if partial:
-                emit = text[:-partial]
-                self.pending = text[-partial:]
+            # Outside a think block — accept either [THINK] (enter think)
+            # or [/THINK] (orphan close, silently swallow). Orphan close
+            # tags are a known token-level glitch under reasoning_effort=
+            # high in long contexts: the model emits a `[/THINK]` without
+            # a preceding `[THINK]` because vLLM's reasoning parser has
+            # already terminated the first think block, and the model's
+            # second-block opening got consumed as a special token. Strip
+            # the leftover close tag so the visible content stays clean.
+            open_idx = text.find(self.OPEN)
+            close_idx = text.find(self.CLOSE)
+            if open_idx == -1 and close_idx == -1:
+                # No full marker. Buffer the longer partial suffix of
+                # either marker so we don't split a tag across chunks.
+                p_open = self._longest_partial_suffix(text, self.OPEN)
+                p_close = self._longest_partial_suffix(text, self.CLOSE)
+                partial = max(p_open, p_close)
+                if partial:
+                    content_parts.append(text[:-partial])
+                    self.pending = text[-partial:]
+                else:
+                    content_parts.append(text)
+                break
+
+            # Pick whichever marker comes first.
+            if open_idx == -1:
+                first_idx, marker, enter = close_idx, self.CLOSE, False
+            elif close_idx == -1:
+                first_idx, marker, enter = open_idx, self.OPEN, True
+            elif open_idx < close_idx:
+                first_idx, marker, enter = open_idx, self.OPEN, True
             else:
-                emit = text
-            (reasoning_parts if self.in_think else content_parts).append(emit)
-            break
+                first_idx, marker, enter = close_idx, self.CLOSE, False
+
+            content_parts.append(text[:first_idx])
+            text = text[first_idx + len(marker) :]
+            if enter:
+                self.in_think = True
+            # Else: orphan close — silently swallow, no state change.
 
         return "".join(reasoning_parts), "".join(content_parts)
 
