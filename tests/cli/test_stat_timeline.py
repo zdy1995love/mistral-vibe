@@ -39,3 +39,15 @@ def test_timeline_columns_for_width_drops_columns_under_thresholds() -> None:
     narrow = timeline_columns_for_width(65)
     assert "tools" not in narrow
     assert "sparkline" not in narrow
+
+
+def test_row_for_raises_on_unknown_column() -> None:
+    import pytest
+    from vibe.cli.textual_ui.widgets.stat_timeline import _row_for
+
+    rec = TurnRecord(
+        index=1, prompt_tokens=100, cached_tokens=50,
+        completion_tokens=20, duration=0.5, started_at=0.0,
+    )
+    with pytest.raises(ValueError, match="unknown column"):
+        _row_for(rec, ("#", "Input", "BogusColumn"))

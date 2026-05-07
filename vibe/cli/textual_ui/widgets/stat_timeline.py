@@ -69,6 +69,8 @@ def _row_for(rec: TurnRecord, columns: tuple[str, ...]) -> tuple[str, ...]:
             cells.append(f"{rec.duration:.1f}s")
         elif col == "tools":
             cells.append(format_tools_cell(rec.tools))
+        else:
+            raise ValueError(f"_row_for: unknown column {col!r}")
     return tuple(cells)
 
 
