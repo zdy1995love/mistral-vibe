@@ -319,11 +319,13 @@ class LLMUsage(BaseModel):
     model_config = ConfigDict(frozen=True)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_prompt_tokens: int = 0
 
     def __add__(self, other: LLMUsage) -> LLMUsage:
         return LLMUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            cached_prompt_tokens=self.cached_prompt_tokens + other.cached_prompt_tokens,
         )
 
 
