@@ -89,39 +89,64 @@ class StatTimelineApp(Container):
         pass
 
     def __init__(self, stats: AgentStats, **kwargs: Any) -> None:
-        super().__init__(id="stat-timeline-app", **kwargs)
+        super().__init__(id="stattimeline-app", **kwargs)
         self._stats = stats
+        self._known_turn_count = 0
+        self._columns: tuple[str, ...] = ()
 
     def action_close(self) -> None:
         self.post_message(self.Cancelled())
 
+    def _header_text(self) -> str:
+        pct = _cache_pct(
+            self._stats.session_cached_tokens, self._stats.session_prompt_tokens
+        )
+        return (
+            f"Per-turn timeline · {len(self._stats.turns)} turns "
+            f"· {pct}% cache hit"
+        )
+
     def compose(self) -> ComposeResult:
         with Vertical(id="stat-timeline-root"):
-            total_p = self._stats.session_prompt_tokens
-            total_c = self._stats.session_cached_tokens
-            pct = _cache_pct(total_c, total_p)
-            yield Label(
-                f"Per-turn timeline · {len(self._stats.turns)} turns · {pct}% cache hit",
-                id="stat-timeline-header",
+            yield Label(self._header_text(), id="stat-timeline-header")
+            yield Static(
+                "No turns yet — this becomes more useful after a few exchanges.",
+                id="stat-timeline-empty",
             )
-            if not self._stats.turns:
-                yield Static(
-                    "No turns yet — this becomes more useful after a few exchanges.",
-                    id="stat-timeline-empty",
-                )
-                return
             yield DataTable(id="stat-timeline-table")
 
     def on_mount(self) -> None:
-        if not self._stats.turns:
-            return
+        self._refresh()
+        # Live-update while the panel is open. Textual auto-stops the timer
+        # when the widget is unmounted.
+        self.set_interval(1.0, self._refresh)
+
+    def _refresh(self) -> None:
+        turns = self._stats.turns
+        empty = self.query_one("#stat-timeline-empty", Static)
         table = self.query_one(DataTable)
-        width = self.size.width or 100
-        columns = timeline_columns_for_width(width)
-        for col in columns:
-            table.add_column(col)
-        for rec in self._stats.turns:
-            table.add_row(*_row_for(rec, columns))
+        header = self.query_one("#stat-timeline-header", Label)
+
+        header.update(self._header_text())
+
+        if not turns:
+            empty.display = True
+            table.display = False
+            return
+
+        empty.display = False
+        table.display = True
+
+        if not self._columns:
+            width = self.size.width or 100
+            self._columns = timeline_columns_for_width(width)
+            for col in self._columns:
+                table.add_column(col)
+
+        if len(turns) > self._known_turn_count:
+            for rec in turns[self._known_turn_count:]:
+                table.add_row(*_row_for(rec, self._columns))
+            self._known_turn_count = len(turns)
 
     def action_scroll_top(self) -> None:
         try:

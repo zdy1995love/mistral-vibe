@@ -1285,7 +1285,7 @@ FeedbackBar {
     margin-left: 1;
 }
 
-#stat-timeline-app {
+#stattimeline-app {
     width: 100%;
     height: auto;
     background: transparent;
