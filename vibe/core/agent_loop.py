@@ -2035,6 +2035,7 @@ class AgentLoop:
         self._plan_session = PlanSession()
         self._pending_fork_to_dev = None
         self._plan_modified_in_turn = False
+        self._pending_turn_tools = []
         self.agent_manager._pre_plan_profile = None
 
         self._reset_session(keep_parent=False)

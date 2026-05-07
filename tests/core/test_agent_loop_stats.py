@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
 
 from vibe.core.agent_loop import AgentLoop
 from vibe.core.types import AgentStats, LLMUsage
@@ -48,3 +47,18 @@ def test_update_stats_accumulates_session_cached_across_turns() -> None:
     assert a.stats.session_cached_tokens == 480
     assert len(a.stats.turns) == 2
     assert a.stats.turns[1].cached_tokens == 480
+
+
+def test_clear_history_includes_pending_turn_tools_reset() -> None:
+    """Regression: clear_history must reset _pending_turn_tools so a
+    mid-flight dispatch doesn't bleed tool names into the new session's
+    first TurnRecord. We assert this by inspecting the source — a full
+    integration test of clear_history would require mocking many
+    collaborators that are unrelated to this contract."""
+    import inspect
+
+    src = inspect.getsource(AgentLoop.clear_history)
+    assert "_pending_turn_tools" in src, (
+        "clear_history must reset _pending_turn_tools — see review "
+        "for Task 6 (commit a6394a7)."
+    )
