@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import Screen
+from textual.binding import Binding, BindingType
+from textual.containers import Container, Vertical
+from textual.message import Message
 from textual.widgets import DataTable, Label, Static
 
 from vibe.core.types import AgentStats, TurnRecord
@@ -74,16 +74,24 @@ def _row_for(rec: TurnRecord, columns: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(cells)
 
 
-class StatTimelineApp(Screen[None]):
-    BINDINGS = [
-        Binding("escape", "dismiss", "Close"),
+class StatTimelineApp(Container):
+    """Stat timeline bottom app for /stat."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "close", "Close", show=False),
         Binding("g", "scroll_top", "Top"),
         Binding("G", "scroll_bottom", "Bottom"),
     ]
 
+    class Cancelled(Message):
+        pass
+
     def __init__(self, stats: AgentStats, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stats = stats
+
+    def action_close(self) -> None:
+        self.post_message(self.Cancelled())
 
     def compose(self) -> ComposeResult:
         with Vertical(id="stat-timeline-root"):

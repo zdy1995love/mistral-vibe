@@ -840,6 +840,11 @@ class VibeApp(App):  # noqa: PLR0904
     ) -> None:
         await self._switch_to_input_app()
 
+    async def on_stat_timeline_app_cancelled(
+        self, _event: StatTimelineApp.Cancelled
+    ) -> None:
+        await self._switch_to_input_app()
+
     async def on_agents_picker_app_edit_requested(
         self, event: AgentsPickerApp.EditRequested
     ) -> None:
@@ -2685,6 +2690,14 @@ class VibeApp(App):  # noqa: PLR0904
             pass
         self._last_escape_time = None
 
+    def _handle_stat_timeline_app_escape(self) -> None:
+        try:
+            stat_timeline = self.query_one(StatTimelineApp)
+            stat_timeline.post_message(StatTimelineApp.Cancelled())
+        except Exception:
+            pass
+        self._last_escape_time = None
+
     # --- Rewind mode ---
 
     def _get_user_message_widgets(self) -> list[UserMessage]:
@@ -2925,6 +2938,8 @@ class VibeApp(App):  # noqa: PLR0904
             self._handle_thinking_picker_app_escape()
         elif self._current_bottom_app == BottomApp.SessionPicker:
             self._handle_session_picker_app_escape()
+        elif self._current_bottom_app == BottomApp.StatTimeline:
+            self._handle_stat_timeline_app_escape()
         elif self._current_bottom_app == BottomApp.Rewind:
             self.run_worker(self._exit_rewind_mode(), exclusive=False)
             self._last_escape_time = None
