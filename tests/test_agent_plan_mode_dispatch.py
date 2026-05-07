@@ -718,3 +718,74 @@ class TestMiddlewareInjectAfterTool:
         # Only the user reminder is appended; no synthetic ack needed.
         assert len(loop.messages) == starting_len + 1
         assert loop.messages[-1].role == Role.user
+
+
+class TestClearHistoryFullyResets:
+    """`/clear` (clear_history) must produce a state indistinguishable from
+    a fresh session in memory. Old conversation is persisted to disk
+    under the previous session_id; from this process's perspective,
+    nothing about the prior session should leak into the next turn.
+    """
+
+    @pytest.mark.asyncio
+    async def test_clear_rotates_plan_session(self) -> None:
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config,
+            agent_name=BuiltinAgentName.PLAN,
+            backend=FakeBackend([]),
+        )
+        # Force lazy init so the path is cached.
+        old_path = loop._plan_session.plan_file_path
+        old_instance = loop._plan_session
+
+        await loop.clear_history()
+
+        # New PlanSession instance with a fresh (re-resolvable) path.
+        assert loop._plan_session is not old_instance, (
+            "clear_history must rotate _plan_session so a new /plan turn "
+            "doesn't reuse the previous plan-file path."
+        )
+        assert loop._plan_session._plan_file_path is None, (
+            "rotated _plan_session must start un-cached, ready to mint a "
+            "fresh path on next access."
+        )
+
+    @pytest.mark.asyncio
+    async def test_clear_drops_pending_fork_to_dev(self) -> None:
+        from pathlib import Path as _P
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config,
+            agent_name=BuiltinAgentName.PLAN,
+            backend=FakeBackend([]),
+        )
+        loop.request_fork_to_dev("# stub", _P("/tmp/stub.md"), BuiltinAgentName.DEFAULT)
+        assert loop.pending_fork_to_dev is not None  # sanity
+
+        await loop.clear_history()
+
+        assert loop.pending_fork_to_dev is None, (
+            "clear_history must drop any staged fork-to-dev — staying "
+            "armed across a /clear would fork the wiped context."
+        )
+
+    @pytest.mark.asyncio
+    async def test_clear_drops_pre_plan_profile_stash(self) -> None:
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config,
+            agent_name=BuiltinAgentName.PLAN,
+            backend=FakeBackend([]),
+        )
+        # Simulate the stash that switch_profile sets when entering PLAN.
+        loop.agent_manager._pre_plan_profile = BuiltinAgentName.DEFAULT
+
+        await loop.clear_history()
+
+        assert loop.agent_manager.pre_plan_profile is None, (
+            "clear_history must drop the pre-plan stash — leaking it into "
+            "the next session means fork-to-dev would mis-target an old "
+            "profile."
+        )

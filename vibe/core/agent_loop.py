@@ -1973,6 +1973,16 @@ class AgentLoop:
 
         self.middleware_pipeline.reset()
         self.tool_manager.reset_all()
+
+        # Wipe all session-scoped in-memory state so /clear is
+        # indistinguishable from a fresh process from the conversation's
+        # perspective. The previous session's content is already on disk
+        # under the old session_id.
+        self._plan_session = PlanSession()
+        self._pending_fork_to_dev = None
+        self._plan_modified_in_turn = False
+        self.agent_manager._pre_plan_profile = None
+
         self._reset_session(keep_parent=False)
 
     @requires_init
