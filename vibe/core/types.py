@@ -31,10 +31,23 @@ class Backend(StrEnum):
     GENERIC = auto()
 
 
+class TurnRecord(BaseModel):
+    """Per-turn snapshot. tools is mutable so the dispatch layer can
+    append to it after the record is appended to AgentStats.turns."""
+    index: int
+    prompt_tokens: int
+    cached_tokens: int
+    completion_tokens: int
+    duration: float
+    started_at: float
+    tools: list[str] = Field(default_factory=list)
+
+
 class AgentStats(BaseModel):
     steps: int = 0
     session_prompt_tokens: int = 0
     session_completion_tokens: int = 0
+    session_cached_tokens: int = 0
     tool_calls_agreed: int = 0
     tool_calls_rejected: int = 0
     tool_calls_failed: int = 0
@@ -45,11 +58,14 @@ class AgentStats(BaseModel):
 
     last_turn_prompt_tokens: int = 0
     last_turn_completion_tokens: int = 0
+    last_turn_cached_tokens: int = 0
     last_turn_duration: float = 0.0
     tokens_per_second: float = 0.0
 
     input_price_per_million: float = 0.0
     output_price_per_million: float = 0.0
+
+    turns: list[TurnRecord] = Field(default_factory=list)
 
     _listeners: dict[str, Callable[[AgentStats], None]] = PrivateAttr(
         default_factory=dict
@@ -122,6 +138,7 @@ class AgentStats(BaseModel):
         self.context_tokens = 0
         self.last_turn_prompt_tokens = 0
         self.last_turn_completion_tokens = 0
+        self.last_turn_cached_tokens = 0
         self.last_turn_duration = 0.0
         self.tokens_per_second = 0.0
 
