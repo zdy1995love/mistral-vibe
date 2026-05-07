@@ -1505,7 +1505,12 @@ class AgentLoop:
             and self.agent_profile.name == BuiltinAgentName.PLAN
             and tool_call.tool_name in ("write_file", "search_replace")
         ):
-            args_path = getattr(tool_call.validated_args, "path", None)
+            # write_file uses ``path``; search_replace uses ``file_path``.
+            # Without checking both, every refinement turn after the first
+            # write silently skipped the plan-confirmation popup.
+            args_path = getattr(
+                tool_call.validated_args, "path", None
+            ) or getattr(tool_call.validated_args, "file_path", None)
             if args_path is not None:
                 try:
                     if (

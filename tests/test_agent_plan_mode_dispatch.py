@@ -590,6 +590,86 @@ class TestAutoPlanConfirmPopup:
         assert target == BuiltinAgentName.DEFAULT  # pre_plan_profile
 
     @pytest.mark.asyncio
+    async def test_auto_popup_fires_after_search_replace_on_plan_file(self) -> None:
+        """Repro for: user picks 'No, keep refining' on the first popup,
+        gives a follow-up like '移除时间的表述', LLM responds with
+        ``search_replace`` against the same plan path, turn settles — but
+        the second popup never fires.
+
+        Root cause: the dispatch handler only checked ``args.path`` to
+        decide whether the plan file was touched. ``search_replace`` uses
+        ``args.file_path`` instead, so the flag never armed and the popup
+        was suppressed for every refinement turn after the first.
+        """
+        from vibe.core.tools.builtins.ask_user_question import (
+            Answer,
+            AskUserQuestionArgs,
+            AskUserQuestionResult,
+        )
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=FakeBackend([])
+        )
+        plan_path = loop._plan_session.plan_file_path
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        # Pre-seed the plan file so search_replace has something to patch.
+        plan_path.write_text("# Plan\n## 估算\n- 模型层：30 分钟\n- 配置层：30 分钟\n")
+
+        sr_args = json.dumps({
+            "file_path": str(plan_path),
+            "content": (
+                "<<<<<<< SEARCH\n"
+                "## 估算\n"
+                "- 模型层：30 分钟\n"
+                "- 配置层：30 分钟\n"
+                "=======\n"
+                ">>>>>>> REPLACE"
+            ),
+        })
+        loop.backend = FakeBackend([
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="search_replace", arguments=sr_args
+                            ),
+                        )
+                    ]
+                )
+            ],
+            [mock_llm_chunk(content="已移除时间估算部分。")],
+        ])
+        loop.agent_manager._pre_plan_profile = BuiltinAgentName.DEFAULT
+
+        captured: list[AskUserQuestionArgs] = []
+
+        async def keep_refining(args: AskUserQuestionArgs) -> AskUserQuestionResult:
+            captured.append(args)
+            return AskUserQuestionResult(
+                answers=[Answer(question="q", answer="No, keep refining", is_other=False)],
+                cancelled=False,
+            )
+
+        loop.set_user_input_callback(keep_refining)
+
+        events = [e async for e in loop.act("移除时间的表述")]
+        assert events  # smoke
+
+        assert len(captured) == 1, (
+            f"Expected popup to fire after search_replace mutates the plan "
+            f"file, got {len(captured)} popup(s) — flag likely never armed "
+            f"because args.file_path was ignored."
+        )
+        # No fork should be staged (user picked keep refining).
+        assert loop.pending_fork_to_dev is None
+        # And the plan file was actually patched (sanity).
+        assert "估算" not in plan_path.read_text()
+
+    @pytest.mark.asyncio
     async def test_auto_popup_does_not_fire_when_plan_unchanged(self) -> None:
         """Read-only turns in plan mode must not trigger the popup; only
         write_file/search_replace against the plan path arms it."""
