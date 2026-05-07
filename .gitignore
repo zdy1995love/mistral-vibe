@@ -209,3 +209,14 @@ docs/superpowers/
 
 # Local diagnostic dumps (chat templates, profiler reports, etc.)
 chat_template.jinja
+
+# Personal Claude Code config (per-machine)
+.claude/
+
+# Snapshot test artifacts (generated, not source)
+snapshot_report.html
+
+# Local research / comparison notes (user-specific scratch docs)
+mistral-update-compare-to-dev.md
+vibe-cc-qwen-comparison.md
+vibe-optimization-follow-cc.md

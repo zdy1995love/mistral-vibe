@@ -126,9 +126,9 @@ class TestPromoteInlineToolCalls:
         malformed pattern when sent back to vLLM.
         """
         content = (
-            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/middleware.py"}'
-            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/agent_loop.py", "limit": 100}'
-            'read_file{"path": "/home/zdy/mistral-vibe-dev/vibe/core/tools/base.py"}'
+            'read_file{"path": "/work/project/vibe/core/middleware.py"}'
+            'read_file{"path": "/work/project/vibe/core/agent_loop.py", "limit": 100}'
+            'read_file{"path": "/work/project/vibe/core/tools/base.py"}'
         )
         msg = _msg(content)
         out = _promote_inline_tool_calls(msg, {"read_file", "write_file", "bash"})
