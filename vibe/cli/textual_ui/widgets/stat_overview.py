@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich import box
 from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
@@ -62,13 +63,14 @@ def render_stat_overview(stats: AgentStats, max_context: int) -> RenderableType:
         return Panel(
             Text("No turns yet — send a message to start.", style="dim"),
             title="Stat",
+            box=box.SQUARE,
             border_style="dim",
             padding=(1, 2),
         )
 
     session_col = Table.grid(padding=(0, 1))
-    session_col.add_column(style="bold")
-    session_col.add_column(justify="right")
+    session_col.add_column(style="bold", min_width=7)
+    session_col.add_column(justify="right", min_width=7)
     session_col.add_column()  # cache% suffix
 
     session_col.add_row(Text("Session", style="bold"), "", "")
@@ -86,8 +88,8 @@ def render_stat_overview(stats: AgentStats, max_context: int) -> RenderableType:
     session_col.add_row("Cost", _fmt_cost(stats.session_cost), "")
 
     last_col = Table.grid(padding=(0, 1))
-    last_col.add_column(style="bold")
-    last_col.add_column(justify="right")
+    last_col.add_column(style="bold", min_width=9)
+    last_col.add_column(justify="right", min_width=7)
     last_col.add_column()
     last_col.add_row(Text("Last turn", style="bold"), "", "")
     last_col.add_row("─────────", "", "")
@@ -109,7 +111,13 @@ def render_stat_overview(stats: AgentStats, max_context: int) -> RenderableType:
     context_line.append_text(_context_bar(stats.context_tokens, max_context))
 
     body = Group(columns, Text(""), context_line)
-    return Panel(body, title="Stat", border_style="bright_black", padding=(1, 2))
+    return Panel(
+        body,
+        title="Stat",
+        box=box.SQUARE,
+        border_style="bright_black",
+        padding=(1, 2),
+    )
 
 
 class StatOverviewMessage(Static):
