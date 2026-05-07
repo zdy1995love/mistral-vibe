@@ -77,6 +77,8 @@ def _row_for(rec: TurnRecord, columns: tuple[str, ...]) -> tuple[str, ...]:
 class StatTimelineApp(Container):
     """Stat timeline bottom app for /stat."""
 
+    can_focus_children = True
+
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "close", "Close", show=False),
         Binding("g", "scroll_top", "Top"),
