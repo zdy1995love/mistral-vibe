@@ -455,3 +455,134 @@ class TestFullForkFlowEndToEnd:
         assert any("Implementing now" in (e.content or "") for e in assistant_replies)
         # Plan file persists on disk through the fork.
         assert plan_file.is_file()
+
+
+class TestAutoPlanConfirmPopup:
+    """The plan-confirmation popup must fire SOFTWARE-driven, not by waiting
+    for the LLM to call exit_plan_mode. Trigger: in PLAN profile, after a
+    write_file/search_replace mutates the plan file, once the LLM's
+    current turn drains (no more tool_calls), agent_loop invokes
+    user_input_callback with the same 3-option AskUserQuestion the
+    ExitPlanMode tool uses. On approval, fork-to-dev is staged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_auto_popup_after_plan_write_and_turn_settles(self) -> None:
+        from vibe.core.tools.builtins.ask_user_question import (
+            Answer,
+            AskUserQuestionArgs,
+            AskUserQuestionResult,
+        )
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=FakeBackend([])
+        )
+        plan_path = loop._plan_session.plan_file_path
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Two-turn script: write_file targets the canonical plan path; LLM
+        # then produces a final assistant message with NO tool_calls — the
+        # natural moment when the auto-popup should fire.
+        write_args = json.dumps({
+            "path": str(plan_path),
+            "content": "# Plan\n- step 1\n- step 2\n",
+        })
+        loop.backend = FakeBackend([
+            [
+                mock_llm_chunk(
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            index=0,
+                            function=FunctionCall(
+                                name="write_file", arguments=write_args
+                            ),
+                        )
+                    ]
+                )
+            ],
+            [mock_llm_chunk(content="Plan summary written.")],
+        ])
+        loop.agent_manager._pre_plan_profile = BuiltinAgentName.DEFAULT
+
+        captured_questions: list[AskUserQuestionArgs] = []
+
+        async def approve(args: AskUserQuestionArgs) -> AskUserQuestionResult:
+            captured_questions.append(args)
+            return AskUserQuestionResult(
+                answers=[
+                    Answer(
+                        question="q",
+                        answer="Yes, and request approval for edits",
+                        is_other=False,
+                    )
+                ],
+                cancelled=False,
+            )
+
+        loop.set_user_input_callback(approve)
+
+        events = [e async for e in loop.act("write the plan")]
+        assert events  # smoke: events flowed
+
+        # The popup must have fired exactly once when the LLM's tool chain
+        # settled — software-driven, not waiting for an exit_plan_mode call.
+        assert len(captured_questions) == 1, (
+            f"Expected auto-popup to fire once when plan was written + turn "
+            f"settled, got {len(captured_questions)} popup(s)"
+        )
+        q = captured_questions[0].questions[0]
+        # Same 3-option shape as ExitPlanMode.
+        labels = {opt.label for opt in q.options}
+        assert "Yes, and auto approve edits" in labels
+        assert "Yes, and request approval for edits" in labels
+
+        # On approval, fork-to-dev must be staged exactly like
+        # ExitPlanMode would do.
+        assert loop.pending_fork_to_dev is not None
+        plan_text, staged_path, target = loop.pending_fork_to_dev
+        assert "step 1" in plan_text
+        assert staged_path == plan_path
+        assert target == BuiltinAgentName.DEFAULT  # pre_plan_profile
+
+    @pytest.mark.asyncio
+    async def test_auto_popup_does_not_fire_when_plan_unchanged(self) -> None:
+        """Read-only turns in plan mode must not trigger the popup; only
+        write_file/search_replace against the plan path arms it."""
+        from vibe.core.tools.builtins.ask_user_question import (
+            AskUserQuestionArgs,
+            AskUserQuestionResult,
+        )
+
+        config = build_test_vibe_config()
+        loop = build_test_agent_loop(
+            config=config, agent_name=BuiltinAgentName.PLAN, backend=FakeBackend([])
+        )
+
+        # LLM does only read_file then summarises — no plan write.
+        target_file = Path(loop._plan_session.plan_file_path).parent / "noop.txt"
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        target_file.write_text("hello")
+        loop.backend = FakeBackend([
+            [mock_llm_chunk(tool_calls=[_read_file_tool_call(str(target_file))])],
+            [mock_llm_chunk(content="Just exploring, no plan yet.")],
+        ])
+
+        called: list[AskUserQuestionArgs] = []
+
+        async def callback(args: AskUserQuestionArgs) -> AskUserQuestionResult:
+            called.append(args)
+            return AskUserQuestionResult(answers=[], cancelled=True)
+
+        loop.set_user_input_callback(callback)
+
+        list(await _drain(loop.act("explore")))
+        assert called == [], (
+            f"Auto-popup must not fire on read-only turns; got {len(called)} call(s)"
+        )
+        assert loop.pending_fork_to_dev is None
+
+
+async def _drain(agen):
+    return [e async for e in agen]

@@ -136,8 +136,7 @@ This is the only file you are allowed to edit. Make sure to create it early and 
 ## Instructions
 1. Research the user's query using read-only tools (grep, read_file, etc.)
 2. If you are unsure about requirements or approach, use the ask_user_question tool to clarify before finalizing your plan
-3. Write your plan to the plan file above
-4. When your plan is complete, call the exit_plan_mode tool to request user approval and switch to implementation mode</{VIBE_WARNING_TAG}>"""
+3. Write your plan to the plan file above. The user will be prompted to approve and start implementation as soon as your turn ends after the write — you do NOT need to call any tool to trigger that. Just stop emitting tool_calls when the plan is complete.</{VIBE_WARNING_TAG}>"""
 
 
 def make_plan_agent_sparse_reminder(plan_file_path: str) -> str:

@@ -14,7 +14,7 @@ from pathlib import Path
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from opentelemetry import trace
@@ -54,6 +54,12 @@ from vibe.core.middleware import (
     make_plan_agent_sparse_reminder,
 )
 from vibe.core.plan_session import PlanSession
+from vibe.core.tools.builtins.ask_user_question import (
+    AskUserQuestionArgs,
+    AskUserQuestionResult,
+    Choice,
+    Question,
+)
 from vibe.core.prompts import UtilityPrompt
 from vibe.core.rewind import RewindManager
 from vibe.core.scratchpad import init_scratchpad
@@ -123,6 +129,7 @@ from vibe.core.utils import (
     get_user_cancellation_message,
     is_user_cancellation_event,
 )
+from vibe.core.utils.io import read_safe
 
 try:
     from vibe.core.teleport.teleport import TeleportService as _TeleportService
@@ -431,6 +438,11 @@ class AgentLoop:
         # after the current act() returns: it calls fork_to_dev() to wipe
         # context and switch profile, then re-enters act() with the seed.
         self._pending_fork_to_dev: tuple[str, Path, str] | None = None
+        # Set when a tool successfully writes/edits the current plan file
+        # in PLAN profile. Reset at the start of each outer turn. The
+        # plan-confirmation popup is fired (software-driven) once the
+        # turn settles (last message non-tool) if this flag is set.
+        self._plan_modified_in_turn: bool = False
 
         try:
             active_model = config.get_active_model()
@@ -917,6 +929,10 @@ class AgentLoop:
             self._hooks_manager.reset_retry_count()
 
         try:
+            # Reset once per act() — accumulate across the inner-tool-chain
+            # iterations so the popup fires at end-of-turn even if the
+            # write_file happened in an earlier iteration of the inner loop.
+            self._plan_modified_in_turn = False
             should_break_loop = False
             first_llm_turn = True
             while not should_break_loop:
@@ -956,7 +972,23 @@ class AgentLoop:
                 # current turn's context anyway.
                 if self._pending_fork_to_dev is not None:
                     should_break_loop = True
-                elif should_break_loop and self._hooks_manager:
+                elif should_break_loop:
+                    # LLM's tool chain has settled (last message non-tool).
+                    # Software-driven plan-confirmation: if the LLM modified
+                    # the plan file during this turn, deterministically
+                    # prompt the user to approve fork-to-dev — instead of
+                    # relying on the LLM to call exit_plan_mode (which it
+                    # routinely forgets, especially on smaller local
+                    # models). May stage pending_fork_to_dev as a side
+                    # effect; the next iteration's hook check skips when
+                    # forking is staged.
+                    await self._maybe_prompt_plan_confirmation()
+
+                if (
+                    should_break_loop
+                    and self._pending_fork_to_dev is None
+                    and self._hooks_manager
+                ):
                     hook_retry: HookUserMessage | None = None
                     async for hook_event in self._hooks_manager.run(
                         HookType.POST_AGENT_TURN, self.session_id, self.session_logger
@@ -1303,6 +1335,93 @@ class AgentLoop:
                 with contextlib.suppress(asyncio.CancelledError):
                     await monitor
 
+    async def _maybe_prompt_plan_confirmation(self) -> None:
+        """Software-driven plan-confirmation prompt.
+
+        Fires when the current outer turn has settled (last message
+        non-tool) and a write_file/search_replace mutated the plan file
+        during this turn. Shows the same 3-option AskUserQuestion the
+        ExitPlanMode tool would. On approval, stages a fork-to-dev via
+        `request_fork_to_dev` so the host app's loop drives the actual
+        wipe-and-reseed.
+
+        This decouples the confirmation from the LLM's tool-calling
+        reliability: smaller / locally-hosted models routinely write the
+        plan and then output a summary without ever calling
+        exit_plan_mode. Software-driven trigger guarantees the dialog
+        appears at the right moment.
+        """
+        if not self._plan_modified_in_turn:
+            return
+        if self.agent_profile.name != BuiltinAgentName.PLAN:
+            return
+        if self.user_input_callback is None:
+            return
+        plan_path = self._plan_session.plan_file_path
+        if not plan_path.is_file():
+            return
+        try:
+            plan_content = read_safe(plan_path).text
+        except OSError:
+            return
+        if not plan_content.strip():
+            return
+
+        confirmation = AskUserQuestionArgs(
+            questions=[
+                Question(
+                    question=(
+                        "Plan written. Approve and start a fresh "
+                        "implementation context with this plan as the seed?"
+                    ),
+                    header="Plan ready",
+                    options=[
+                        Choice(
+                            label="Yes, and auto approve edits",
+                            description=(
+                                "Wipe planning context, start fresh with "
+                                "auto-approve edits enabled."
+                            ),
+                        ),
+                        Choice(
+                            label="Yes, and request approval for edits",
+                            description=(
+                                "Wipe planning context, start fresh in the "
+                                "profile you were in before plan mode."
+                            ),
+                        ),
+                        Choice(
+                            label="No, keep refining",
+                            description=(
+                                "Stay in plan mode; the assistant can keep "
+                                "editing the plan file."
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            content_preview=plan_content,
+        )
+
+        result = await self.user_input_callback(confirmation)
+        result = cast(AskUserQuestionResult, result)
+        if result.cancelled or not result.answers:
+            return
+        answer_lower = result.answers[0].answer.lower()
+
+        if answer_lower == "yes, and auto approve edits":
+            target_profile = BuiltinAgentName.ACCEPT_EDITS
+        elif answer_lower == "yes, and request approval for edits":
+            stashed = self.agent_manager.pre_plan_profile
+            target_profile = stashed or BuiltinAgentName.DEFAULT
+            available = getattr(self.agent_manager, "available_agents", None)
+            if stashed and available is not None and stashed not in available:
+                target_profile = BuiltinAgentName.DEFAULT
+        else:
+            return  # "No, keep refining" or any other answer
+
+        self.request_fork_to_dev(plan_content, plan_path, target_profile)
+
     def _handle_tool_response(
         self,
         tool_call: ResolvedToolCall,
@@ -1317,6 +1436,22 @@ class AgentLoop:
                 self.format_handler.create_tool_response_message(tool_call, text)
             )
         )
+
+        if (
+            status == "success"
+            and self.agent_profile.name == BuiltinAgentName.PLAN
+            and tool_call.tool_name in ("write_file", "search_replace")
+        ):
+            args_path = getattr(tool_call.validated_args, "path", None)
+            if args_path is not None:
+                try:
+                    if (
+                        Path(args_path).resolve()
+                        == self._plan_session.plan_file_path.resolve()
+                    ):
+                        self._plan_modified_in_turn = True
+                except (OSError, ValueError):
+                    pass
 
         if span is not None:
             set_tool_result(span, text)
