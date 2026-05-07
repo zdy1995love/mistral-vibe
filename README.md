@@ -1,5 +1,25 @@
 # Mistral Vibe
 
+## About this fork
+
+A fork of [mistralai/mistral-vibe](https://github.com/mistralai/mistral-vibe) aimed primarily at **self-hosted vLLM deployments** (especially long-context Mistral models) and heavy daily users. Most changes benefit any backend; a handful of streaming-parser patches are vLLM-specific. A common thread runs through most of them: **keeping long sessions working** — enough headroom to think, byte-stable prefix so vLLM's KV cache actually hits. Installable as-is; no external service or per-machine config required.
+
+- **Plan mode (modeled after Claude Code)**: dispatch-layer gate on mutating tools; plan files live at project-local `<cwd>/.vibe/plans/`; `ExitPlanMode` does *not* continue in the same context — it forks into a fresh dev context with the plan as a seed prompt. The long planning turn (reads, exploration, false starts) doesn't bleed into the implementation phase, giving plan→implement a real cut instead of just a UI toggle.
+
+- **Superpowers**: 14 bundled skills (`debugging` / `tdd` / `brainstorming` / `writing-plans` / `requesting-code-review` and more) plus a general-purpose subagent, vendored from [obra/superpowers](https://github.com/obra/superpowers) (MIT, see `LICENSE.upstream`), shipped inside `vibe/core/skills/builtins/superpowers/` so they work out of the box. **In practice this constrains the workflow remarkably well** — brainstorm → plan → TDD → review tends to actually happen instead of devolving into "let me just patch this." Trade-off: once a skill is invoked, its full `SKILL.md` (often several hundred lines) lands in context, and running a full flow that touches several skills will eat into the budget on local models with sub-100k context.
+
+- **Output styles**: `/style` to switch; built-in `default` / `concise` / `learner`; user-defined styles via `~/.vibe/prompts/styles/NAME.md`. The default style is byte-equivalent to upstream's prompt assembly, so existing setups carry over unchanged.
+
+- **vLLM streaming compat**: client-side `ThinkTagExtractor` and `MistralToolCallTextExtractor` handle cases where vLLM's `--tool-call-parser mistral` leaks `[TOOL_CALLS]<name>{...}` text into `delta.content` or strands a `[/THINK]` close tag without an opener. Some of these patches are really compensating for accuracy loss in [Mistral-Medium-3.5-128B-NVFP4](https://huggingface.co/zdy1995love/Mistral-Medium-3.5-128B-NVFP4) (yes, I quantized that model myself) under long context with `reasoning_effort=high`.
+
+- **Preserve all reasoning to hit vLLM prefix KV cache**: past reasoning is replayed back to the model as thinking content blocks, so the prefix stays byte-stable and prefix-cacheable while still giving the model continuity of thought. Supporting fixes for prefix stability: sanitize truncated `tool_call.arguments` before persisting, auto-inject an assistant ack after an orphan trailing `tool` message, and so on.
+
+- **Micro-compact (`/compact --micro`)**: clears stale tool-result content while preserving the message stream and tool-call structure. Avoids the "lost critical context after `/compact`" problem of summarization-based compaction.
+
+- **Telemetry hard-disabled** by default.
+
+Upstream releases get **best-effort** merges; when upstream ships an equivalent capability, the fork's version folds back to upstream (marked *Folded upstream* in the changelog). Full per-change rundown is in the **Fork Changelog** below.
+
 ## Fork Changelog
 
 Status legend: **Kept** = fork-only, still maintained; **Folded upstream** = upstream now ships an equivalent, fork rebased onto it with minor tweaks; **Deprecated** = upstream fully covers it, fork has dropped its version.
