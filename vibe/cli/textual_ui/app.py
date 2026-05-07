@@ -86,6 +86,8 @@ from vibe.cli.textual_ui.widgets.messages import (
     WhatsNewMessage,
 )
 from vibe.cli.textual_ui.widgets.model_picker import ModelPickerApp
+from vibe.cli.textual_ui.widgets.stat_overview import StatOverviewMessage
+from vibe.cli.textual_ui.widgets.stat_timeline import StatTimelineApp
 from vibe.cli.textual_ui.widgets.narrator_status import NarratorStatus
 from vibe.cli.textual_ui.widgets.no_markup_static import NoMarkupStatic
 from vibe.cli.textual_ui.widgets.path_display import PathDisplay
@@ -219,6 +221,7 @@ class BottomApp(StrEnum):
     ThinkingPicker = auto()
     Rewind = auto()
     SessionPicker = auto()
+    StatTimeline = auto()
     Voice = auto()
 
 
@@ -1807,18 +1810,26 @@ class VibeApp(App):  # noqa: PLR0904
             )
         )
 
-    async def _show_status(self, **kwargs: Any) -> None:
-        stats = self.agent_loop.stats
-        status_text = f"""## Agent Statistics
+    async def _show_stat(self, cmd_args: str = "", **kwargs: Any) -> None:
+        arg = cmd_args.strip().lower()
+        if arg == "":
+            max_ctx = self.agent_loop.config.get_active_model().auto_compact_threshold
+            await self._mount_and_scroll(
+                StatOverviewMessage(stats=self.agent_loop.stats, max_context=max_ctx)
+            )
+        elif arg in ("timeline", "tl"):
+            await self._switch_to_stat_timeline_app()
+        else:
+            await self._mount_and_scroll(ErrorMessage(
+                f"Unknown stat subcommand: {arg!r}. Try '/stat' or '/stat timeline'."
+            ))
 
-- **Steps**: {stats.steps:,}
-- **Session Prompt Tokens**: {stats.session_prompt_tokens:,}
-- **Session Completion Tokens**: {stats.session_completion_tokens:,}
-- **Session Total LLM Tokens**: {stats.session_total_llm_tokens:,}
-- **Last Turn Tokens**: {stats.last_turn_total_tokens:,}
-- **Cost**: ${stats.session_cost:.4f}
-"""
-        await self._mount_and_scroll(UserCommandMessage(status_text))
+    async def _switch_to_stat_timeline_app(self) -> None:
+        if self._current_bottom_app == BottomApp.StatTimeline:
+            return
+        await self._switch_from_input(
+            StatTimelineApp(stats=self.agent_loop.stats)
+        )
 
     async def _show_config(self, **kwargs: Any) -> None:
         """Switch to the configuration app in the bottom panel."""
@@ -2599,6 +2610,8 @@ class VibeApp(App):  # noqa: PLR0904
                     self.query_one(ConnectorAuthApp).focus()
                 case BottomApp.Rewind:
                     self.query_one(RewindApp).focus()
+                case BottomApp.StatTimeline:
+                    self.query_one(StatTimelineApp).focus()
                 case BottomApp.Voice:
                     self.query_one(VoiceApp).focus()
                 case app:

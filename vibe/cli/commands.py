@@ -120,10 +120,10 @@ class CommandRegistry:
                 handler="_exit_app",
                 exits=True,
             ),
-            "status": Command(
-                aliases=frozenset(["/status"]),
-                description="Display agent statistics",
-                handler="_show_status",
+            "stat": Command(
+                aliases=frozenset(["/stat", "/status", "/statistics"]),
+                description="Display session statistics. Pass 'timeline' for per-turn breakdown",
+                handler="_show_stat",
             ),
             "teleport": Command(
                 aliases=frozenset(["/teleport"]),
