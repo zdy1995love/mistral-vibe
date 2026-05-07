@@ -206,3 +206,6 @@ tests/playground/*
 
 # superpowers spec/plans are local-only (per user decision 2026-04-26)
 docs/superpowers/
+
+# Local diagnostic dumps (chat templates, profiler reports, etc.)
+chat_template.jinja
