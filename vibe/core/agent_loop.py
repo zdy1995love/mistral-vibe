@@ -1258,6 +1258,7 @@ class AgentLoop:
                 return
 
             self.stats.tool_calls_agreed += 1
+            self._record_dispatched_tool(tool_call.tool_name)
 
             snapshot = tool_instance.get_file_snapshot(tool_call.validated_args)
             if snapshot is not None:
@@ -1708,6 +1709,10 @@ class AgentLoop:
             raise RuntimeError(
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
             ) from e
+
+    def _record_dispatched_tool(self, tool_name: str) -> None:
+        """Buffer a tool name for the next TurnRecord. Flushed by _update_stats."""
+        self._pending_turn_tools.append(tool_name)
 
     def _update_stats(self, usage: LLMUsage, time_seconds: float) -> None:
         self.stats.last_turn_duration = time_seconds

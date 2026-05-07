@@ -62,3 +62,24 @@ def test_clear_history_includes_pending_turn_tools_reset() -> None:
         "clear_history must reset _pending_turn_tools — see review "
         "for Task 6 (commit a6394a7)."
     )
+
+
+def test_dispatch_appends_tool_name_to_pending() -> None:
+    """When a tool dispatch reaches 'agreed', its name is queued for the next TurnRecord."""
+    a = _agent_with_stats()
+
+    a._record_dispatched_tool("read")
+    a._record_dispatched_tool("bash")
+    a._record_dispatched_tool("read")
+
+    assert a._pending_turn_tools == ["read", "bash", "read"]
+
+
+def test_pending_tools_flushed_on_update_stats() -> None:
+    a = _agent_with_stats()
+    a._record_dispatched_tool("edit")
+    a._record_dispatched_tool("edit")
+    a.stats.steps = 1
+    a._update_stats(LLMUsage(prompt_tokens=10, completion_tokens=2), 0.1)
+    assert a.stats.turns[0].tools == ["edit", "edit"]
+    assert a._pending_turn_tools == []
