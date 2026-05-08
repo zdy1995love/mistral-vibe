@@ -13,13 +13,11 @@ def _agent_with_stats() -> AgentLoop:
     """
     a = AgentLoop.__new__(AgentLoop)
     a.stats = AgentStats()
-    a._pending_turn_tools = []
     return a
 
 
 def test_update_stats_records_cached_and_appends_turn_record() -> None:
     a = _agent_with_stats()
-    a._pending_turn_tools = ["read", "bash", "read"]  # populated by dispatch
     a.stats.steps = 3
 
     usage = LLMUsage(prompt_tokens=2340, completion_tokens=64, cached_prompt_tokens=1820)
@@ -34,8 +32,7 @@ def test_update_stats_records_cached_and_appends_turn_record() -> None:
     assert rec.cached_tokens == 1820
     assert rec.completion_tokens == 64
     assert rec.duration == 1.2
-    assert rec.tools == ["read", "bash", "read"]
-    assert a._pending_turn_tools == []  # flushed
+    assert rec.tools == []  # dispatch hasn't happened yet
 
 
 def test_update_stats_accumulates_session_cached_across_turns() -> None:
@@ -49,37 +46,79 @@ def test_update_stats_accumulates_session_cached_across_turns() -> None:
     assert a.stats.turns[1].cached_tokens == 480
 
 
-def test_clear_history_includes_pending_turn_tools_reset() -> None:
-    """Regression: clear_history must reset _pending_turn_tools so a
-    mid-flight dispatch doesn't bleed tool names into the new session's
-    first TurnRecord. We assert this by inspecting the source — a full
-    integration test of clear_history would require mocking many
-    collaborators that are unrelated to this contract."""
-    import inspect
+def test_record_dispatched_tool_appends_to_current_turn() -> None:
+    a = _agent_with_stats()
+    a.stats.steps = 1
+    a._update_stats(LLMUsage(prompt_tokens=10, completion_tokens=2), 0.1)
+    a._record_dispatched_tool("edit")
+    a._record_dispatched_tool("edit")
+    assert a.stats.turns[0].tools == ["edit", "edit"]
 
-    src = inspect.getsource(AgentLoop.clear_history)
-    assert "_pending_turn_tools" in src, (
-        "clear_history must reset _pending_turn_tools — see review "
-        "for Task 6 (commit a6394a7)."
+
+def test_record_dispatched_tool_before_any_turn_is_safe() -> None:
+    """Defensive: if dispatch ever fires before _update_stats has created
+    a TurnRecord (shouldn't happen in practice but we don't want to crash),
+    the call is a no-op rather than IndexError."""
+    a = _agent_with_stats()
+    a._record_dispatched_tool("read")  # must not raise
+    assert a.stats.turns == []
+
+
+# --- Real-call-ordering regression tests (0508-issues P0) -----------------
+#
+# At runtime _update_stats runs FIRST inside _chat / _chat_streaming, then
+# _handle_tool_calls dispatches and calls _record_dispatched_tool. So the
+# tool name must land on the just-created TurnRecord, not on a future one.
+# The earlier `_pending_turn_tools` buffer design had this backwards: the
+# flush at the START of _update_stats grabbed the previous turn's pending
+# tools, shifting every turn's tool list one slot forward.
+
+
+def test_tool_dispatched_after_update_stats_lands_on_current_turn() -> None:
+    a = _agent_with_stats()
+    a.stats.steps = 1
+    a._update_stats(LLMUsage(prompt_tokens=100, completion_tokens=10), 0.5)
+    a._record_dispatched_tool("read")
+    a._record_dispatched_tool("bash")
+
+    assert a.stats.turns[-1].tools == ["read", "bash"]
+
+
+def test_failed_turn_dispatch_does_not_leak_to_next_turn() -> None:
+    a = _agent_with_stats()
+
+    # Turn N: success, dispatches a tool.
+    a.stats.steps = 1
+    a._update_stats(LLMUsage(prompt_tokens=100, completion_tokens=10), 0.5)
+    a._record_dispatched_tool("write")
+
+    # Turn N+1: _chat raises before _update_stats — nothing recorded.
+
+    # Turn N+2: success, no dispatch.
+    a.stats.steps = 3
+    a._update_stats(LLMUsage(prompt_tokens=120, completion_tokens=5), 0.3)
+
+    assert a.stats.turns[0].tools == ["write"]
+    assert a.stats.turns[-1].tools == [], (
+        f"failed-turn dispatch leaked into next successful turn: "
+        f"{a.stats.turns[-1].tools}"
     )
 
 
-def test_dispatch_appends_tool_name_to_pending() -> None:
-    """When a tool dispatch reaches 'agreed', its name is queued for the next TurnRecord."""
+def test_compaction_turn_does_not_steal_prior_turn_tools() -> None:
     a = _agent_with_stats()
 
-    a._record_dispatched_tool("read")
-    a._record_dispatched_tool("bash")
-    a._record_dispatched_tool("read")
-
-    assert a._pending_turn_tools == ["read", "bash", "read"]
-
-
-def test_pending_tools_flushed_on_update_stats() -> None:
-    a = _agent_with_stats()
-    a._record_dispatched_tool("edit")
-    a._record_dispatched_tool("edit")
+    # User turn 1 with a tool dispatch.
     a.stats.steps = 1
-    a._update_stats(LLMUsage(prompt_tokens=10, completion_tokens=2), 0.1)
-    assert a.stats.turns[0].tools == ["edit", "edit"]
-    assert a._pending_turn_tools == []
+    a._update_stats(LLMUsage(prompt_tokens=100, completion_tokens=10), 0.5)
+    a._record_dispatched_tool("read")
+
+    # /compact runs an LLM turn (no dispatch).
+    a.stats.steps = 2
+    a._update_stats(LLMUsage(prompt_tokens=2000, completion_tokens=500), 1.0)
+
+    assert a.stats.turns[0].tools == ["read"]
+    assert a.stats.turns[1].tools == [], (
+        f"compaction TurnRecord captured prior turn's tools: "
+        f"{a.stats.turns[1].tools}"
+    )

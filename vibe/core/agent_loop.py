@@ -465,7 +465,6 @@ class AgentLoop:
         self.messages = MessageList(initial=[system_message], observer=message_observer)
 
         self.stats = AgentStats()
-        self._pending_turn_tools: list[str] = []
         self.approval_callback: ApprovalCallback | None = None
         self.user_input_callback: UserInputCallback | None = None
         self.entrypoint_metadata = entrypoint_metadata
@@ -1711,8 +1710,14 @@ class AgentLoop:
             ) from e
 
     def _record_dispatched_tool(self, tool_name: str) -> None:
-        """Buffer a tool name for the next TurnRecord. Flushed by _update_stats."""
-        self._pending_turn_tools.append(tool_name)
+        """Append a dispatched tool's name onto the current turn's record.
+
+        Real flow: _update_stats runs first (inside _chat) and creates the
+        TurnRecord; _handle_tool_calls then dispatches and calls this. So
+        the tool always lands on the most recent turn.
+        """
+        if self.stats.turns:
+            self.stats.turns[-1].tools.append(tool_name)
 
     def _update_stats(self, usage: LLMUsage, time_seconds: float) -> None:
         self.stats.last_turn_duration = time_seconds
@@ -1733,9 +1738,7 @@ class AgentLoop:
             completion_tokens=usage.completion_tokens,
             duration=time_seconds,
             started_at=time.time() - time_seconds,
-            tools=list(self._pending_turn_tools),
         ))
-        self._pending_turn_tools.clear()
 
     async def _should_execute_tool(
         self, tool: BaseTool, args: BaseModel, tool_call_id: str
@@ -2040,7 +2043,6 @@ class AgentLoop:
         self._plan_session = PlanSession()
         self._pending_fork_to_dev = None
         self._plan_modified_in_turn = False
-        self._pending_turn_tools = []
         self.agent_manager._pre_plan_profile = None
 
         self._reset_session(keep_parent=False)
