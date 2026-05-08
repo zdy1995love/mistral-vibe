@@ -212,7 +212,9 @@ class OpenAIAdapter(APIAdapter):
 def _apply_think_extractor_oneshot(chunk: LLMChunk) -> LLMChunk:
     msg = chunk.message
     content = msg.content
-    if msg.reasoning_content or not content or "[THINK]" not in content:
+    if msg.reasoning_content or not content or (
+        "[THINK]" not in content and "[/THINK]" not in content
+    ):
         return chunk
     ext = ThinkTagExtractor()
     r, c = ext.feed(content)
