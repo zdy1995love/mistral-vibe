@@ -33,7 +33,7 @@ Skills are also user-invocable as `/<skill-name>` slash commands.
 
 ## Platform Adaptation
 
-Tool names in skill bodies were translated from Claude Code naming during the vibe port. If a skill references a Claude-Code-style tool that's not yet translated, use the mapping in the `superpowers` output style or in `references/` (legacy mapping files for Copilot/Codex/Gemini).
+Tool names in skill bodies were translated from Claude Code naming during the vibe port. If a skill references a Claude-Code-style tool that's not yet translated, use the mapping in `references/` (legacy mapping files for Copilot/Codex/Gemini).
 
 # Using Skills
 
