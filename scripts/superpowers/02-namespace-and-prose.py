@@ -20,7 +20,7 @@ NAMESPACE_RX = re.compile(r"\bsuperpowers:(" + "|".join(SKILL_NAMES) + r")\b")
 
 
 def fix_namespace(text: str) -> tuple[str, int]:
-    return NAMESPACE_RX.subn(r"\1", text)
+    return NAMESPACE_RX.subn(r"superpowers-\1", text)
 
 
 # ----- targeted prose fixes -----

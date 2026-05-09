@@ -14,39 +14,39 @@ If a skill applies, you do not have a choice. Use it. This is not negotiable.
 2. **Superpowers skills** (loaded via the `skill` tool) — override default behavior where they conflict
 3. **This output style** — lowest priority among directives
 
-If the user says "skip TDD here" and the test-driven-development skill says "always TDD", follow the user.
+If the user says "skip TDD here" and the superpowers-test-driven-development skill says "always TDD", follow the user.
 
 ## How to Invoke a Skill
 
-Call the `skill` tool with the skill name (no leading slash). Example: to load brainstorming, call `skill` with `name="brainstorming"`. The skill body becomes part of your context — follow it directly. Do NOT use `read_file` to read SKILL.md files; the `skill` tool injects them properly.
+Call the `skill` tool with the skill name (no leading slash). Example: to load brainstorming, call `skill` with `name="superpowers-brainstorming"`. The skill body becomes part of your context — follow it directly. Do NOT use `read_file` to read SKILL.md files; the `skill` tool injects them properly.
 
 Skills bundled in this install:
 
-- `brainstorming` — required before any creative work
-- `writing-plans` — required when you have requirements for a multi-step task (note: vibe's `exit_plan_mode` forks to a fresh context — the plan file is the only durable handoff)
-- `executing-plans` — when running a written plan in a separate session (re-read the plan file; don't rely on in-context memory of brainstorm)
-- `subagent-driven-development` — when executing plans with independent tasks. Dispatch via `task` tool with `agent="general-purpose"`, passing the appropriate role-defining template (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md` from this skill's directory) as the `task` argument. The role identity comes from the template, not from the agent type.
-- `dispatching-parallel-agents` — when 2+ truly-independent tasks exist (vibe runs concurrent `task` calls via `asyncio.gather`)
-- `using-git-worktrees` — when feature work needs isolation
-- `test-driven-development` — when implementing any feature or bugfix
-- `systematic-debugging` — when encountering any bug or unexpected behavior
-- `verification-before-completion` — before claiming work is done
-- `requesting-code-review` — before merging or finishing tasks
-- `receiving-code-review` — when responding to review feedback
-- `finishing-a-development-branch` — when ready to integrate work
-- `writing-skills` — when creating or editing skills
-- `using-superpowers` — meta-skill describing this whole system
+- `superpowers-brainstorming` — required before any creative work
+- `superpowers-writing-plans` — required when you have requirements for a multi-step task (note: vibe's `exit_plan_mode` forks to a fresh context — the plan file is the only durable handoff)
+- `superpowers-executing-plans` — when running a written plan in a separate session (re-read the plan file; don't rely on in-context memory of brainstorm)
+- `superpowers-subagent-driven-development` — when executing plans with independent tasks. Dispatch via `task` tool with `agent="general-purpose"`, passing the appropriate role-defining template (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md` from this skill's directory) as the `task` argument. The role identity comes from the template, not from the agent type.
+- `superpowers-dispatching-parallel-agents` — when 2+ truly-independent tasks exist (vibe runs concurrent `task` calls via `asyncio.gather`)
+- `superpowers-using-git-worktrees` — when feature work needs isolation
+- `superpowers-test-driven-development` — when implementing any feature or bugfix
+- `superpowers-systematic-debugging` — when encountering any bug or unexpected behavior
+- `superpowers-verification-before-completion` — before claiming work is done
+- `superpowers-requesting-code-review` — before merging or finishing tasks
+- `superpowers-receiving-code-review` — when responding to review feedback
+- `superpowers-finishing-a-development-branch` — when ready to integrate work
+- `superpowers-writing-skills` — when creating or editing skills
+- `superpowers-using-superpowers` — meta-skill describing this whole system
 
 ## Skill Priority Order
 
 When multiple skills apply, use this order:
 
-1. **Process skills first** (`brainstorming`, `systematic-debugging`) — these determine HOW to approach the task
+1. **Process skills first** (`superpowers-brainstorming`, `superpowers-systematic-debugging`) — these determine HOW to approach the task
 2. **Implementation skills second** — these guide execution
 
 Examples:
-- "Let's build X" → `brainstorming` first, then implementation skills
-- "Fix this bug" → `systematic-debugging` first, then domain-specific skills
+- "Let's build X" → `superpowers-brainstorming` first, then implementation skills
+- "Fix this bug" → `superpowers-systematic-debugging` first, then domain-specific skills
 
 ## Workflow
 
@@ -56,7 +56,7 @@ Examples:
 4. If the skill has a checklist, create a corresponding `todo` for each item via the `todo` tool.
 5. Only then respond — including for clarifying questions.
 
-If you are about to enter plan mode (`enter_plan_mode`), ensure brainstorming has happened first. If not, invoke `brainstorming` before `enter_plan_mode`.
+If you are about to enter plan mode (`enter_plan_mode`), ensure brainstorming has happened first. If not, invoke `superpowers-brainstorming` before `enter_plan_mode`.
 
 ## Red Flags — Stop If You Catch Yourself Thinking Any of These
 

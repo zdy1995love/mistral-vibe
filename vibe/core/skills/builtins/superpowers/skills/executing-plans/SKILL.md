@@ -1,5 +1,5 @@
 ---
-name: executing-plans
+name: superpowers-executing-plans
 description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
 ---
 
@@ -9,9 +9,9 @@ description: Use when you have a written implementation plan to execute in a sep
 
 Load plan, review critically, execute all tasks, report when complete.
 
-**Announce at start:** "I'm using the executing-plans skill to implement this plan."
+**Announce at start:** "I'm using the superpowers-executing-plans skill to implement this plan."
 
-**Note:** mistral-vibe ships the `general-purpose` subagent — prefer subagent-driven-development for plans with mostly-independent tasks (higher-quality results, two-stage review per task). Use this skill when tasks are tightly coupled and benefit from same-context execution.
+**Note:** mistral-vibe ships the `general-purpose` subagent — prefer superpowers-subagent-driven-development for plans with mostly-independent tasks (higher-quality results, two-stage review per task). Use this skill when tasks are tightly coupled and benefit from same-context execution.
 
 **Plan-mode handoff:** This skill is typically invoked in a fresh context after `exit_plan_mode` forks the planning session. The plan file is your only durable artifact — re-read it from disk; don't rely on in-context memory.
 
@@ -34,8 +34,8 @@ For each task:
 ### Step 3: Complete Development
 
 After all tasks complete and verified:
-- Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use finishing-a-development-branch
+- Announce: "I'm using the superpowers-finishing-a-development-branch skill to complete this work."
+- **REQUIRED SUB-SKILL:** Use superpowers-finishing-a-development-branch
 - Follow that skill to verify tests, present options, execute choice
 
 ## When to Stop and Ask for Help
@@ -67,6 +67,6 @@ After all tasks complete and verified:
 ## Integration
 
 **Required workflow skills:**
-- **using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **writing-plans** - Creates the plan this skill executes
-- **finishing-a-development-branch** - Complete development after all tasks
+- **superpowers-using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
+- **superpowers-writing-plans** - Creates the plan this skill executes
+- **superpowers-finishing-a-development-branch** - Complete development after all tasks

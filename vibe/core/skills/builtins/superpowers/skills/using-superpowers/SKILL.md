@@ -1,5 +1,5 @@
 ---
-name: using-superpowers
+name: superpowers-using-superpowers
 description: Use when starting any conversation - establishes how to find and use skills, requiring `skill` tool invocation before ANY response including clarifying questions
 ---
 
@@ -27,7 +27,7 @@ If CLAUDE.md, GEMINI.md, or AGENTS.md says "don't use TDD" and a skill says "alw
 
 ## How to Access Skills
 
-Use the `skill` tool with the bare skill name (e.g. `name="brainstorming"`, no plugin prefix). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
+Use the `skill` tool with the bare skill name (e.g. `name="superpowers-brainstorming"`, no plugin prefix). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
 
 Skills are also user-invocable as `/<skill-name>` slash commands.
 
@@ -46,7 +46,7 @@ digraph skill_flow {
     "User message received" [shape=doublecircle];
     "About to enter_plan_mode?" [shape=doublecircle];
     "Already brainstormed?" [shape=diamond];
-    "Invoke brainstorming skill" [shape=box];
+    "Invoke superpowers-brainstorming skill" [shape=box];
     "Might any skill apply?" [shape=diamond];
     "Invoke `skill` tool" [shape=box];
     "Announce: 'Using [skill] to [purpose]'" [shape=box];
@@ -56,9 +56,9 @@ digraph skill_flow {
     "Respond (including clarifications)" [shape=doublecircle];
 
     "About to enter_plan_mode?" -> "Already brainstormed?";
-    "Already brainstormed?" -> "Invoke brainstorming skill" [label="no"];
+    "Already brainstormed?" -> "Invoke superpowers-brainstorming skill" [label="no"];
     "Already brainstormed?" -> "Might any skill apply?" [label="yes"];
-    "Invoke brainstorming skill" -> "Might any skill apply?";
+    "Invoke superpowers-brainstorming skill" -> "Might any skill apply?";
 
     "User message received" -> "Might any skill apply?";
     "Might any skill apply?" -> "Invoke `skill` tool" [label="yes, even 1%"];

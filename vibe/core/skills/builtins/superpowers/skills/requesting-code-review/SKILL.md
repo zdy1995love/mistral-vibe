@@ -1,5 +1,5 @@
 ---
-name: requesting-code-review
+name: superpowers-requesting-code-review
 description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
 ---
 
@@ -100,4 +100,4 @@ You: [Fix progress indicators]
 - Show code/tests that prove it works
 - Request clarification
 
-See template at: requesting-code-review/code-reviewer.md
+See template at: superpowers-requesting-code-review/code-reviewer.md
