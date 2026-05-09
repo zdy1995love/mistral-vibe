@@ -231,15 +231,17 @@ class TestReadOnlyAgentMiddleware:
             assert r.message is None
 
     @pytest.mark.asyncio
-    async def test_sparse_reminder_skipped_when_prev_message_is_tool(
+    async def test_sparse_reminder_prepends_assistant_ack_when_prev_message_is_tool(
         self, vibe_config: VibeConfig
     ) -> None:
         """Strict backends (Mistral via vLLM) reject [tool, user] sequences.
-        The agent_loop's middleware-result handler must skip Role.user
-        injections when the last message is a tool result.
+        When the last message is a tool result, the agent_loop's
+        middleware-result handler prepends a synthetic assistant ack
+        before the user-role reminder, so the role sequence stays valid.
 
-        Tested at the agent_loop integration level since the skip lives
-        in agent_loop._handle_middleware_result, not in middleware itself.
+        Tested at the agent_loop integration level since the prepend
+        lives in agent_loop._handle_middleware_result, not in middleware
+        itself.
         """
         from tests.conftest import build_test_agent_loop, build_test_vibe_config
         from vibe.core.middleware import MiddlewareAction, MiddlewareResult
@@ -259,10 +261,15 @@ class TestReadOnlyAgentMiddleware:
         async for _ in loop._handle_middleware_result(result):
             pass
 
-        # No injection should have happened (last was tool).
-        assert len(loop.messages) == prev_count
+        # Last was tool -> two messages added: synthetic assistant ack + user-injected.
+        assert len(loop.messages) == prev_count + 2
+        assert loop.messages[-2].role == Role.assistant
+        assert loop.messages[-1].role == Role.user
+        assert loop.messages[-1].content == "reminder"
+        assert loop.messages[-1].injected is True
 
-        # Now last is assistant — injection IS allowed.
+        # Now break the [user-injected] tail with an assistant message —
+        # next inject should not need a synthetic ack.
         loop.messages.append(LLMMessage(role=Role.assistant, content="next"))
         prev_count = len(loop.messages)
         async for _ in loop._handle_middleware_result(result):
