@@ -6,8 +6,10 @@ from pathlib import Path
 
 ROOT = Path("/home/zdy/.vibe/vendor/superpowers/skills")
 
-# Strip plugin-namespace prefix — vibe uses bare skill names
-# Match `superpowers:<name>` where <name> is one of our 14 skills.
+# Replace plugin-namespace prefix `superpowers:<name>` with `superpowers-<name>` —
+# vibe parser only allows `^[a-z0-9]+(-[a-z0-9]+)*$`, so we use a hyphen
+# instead of a colon. The fork keeps the namespace to avoid collisions with
+# vibe builtin slash commands (e.g. /loop in v2.9.5).
 SKILL_NAMES = [
     "brainstorming", "dispatching-parallel-agents", "executing-plans",
     "finishing-a-development-branch", "receiving-code-review",
@@ -57,7 +59,7 @@ Skills use Claude Code tool names. Non-CC platforms: see `references/copilot-too
 
 USING_SP_NEW = """## How to Access Skills
 
-Use the `skill` tool with the bare skill name (e.g. `name="brainstorming"`, no plugin prefix). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
+Use the `skill` tool with the canonical skill name (e.g. `name="superpowers-brainstorming"`). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
 
 Skills are also user-invocable as `/<skill-name>` slash commands.
 

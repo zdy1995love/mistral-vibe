@@ -1,6 +1,10 @@
 # Superpowers Integration — Development Plan
 
-Status: planning. Branch: `superpowers`.
+Status: **historical**. Sprints 1–2 shipped on `dev`; Sprints 3–5 deferred. Read with these architectural deltas in mind:
+
+- The **`vibe/core/prompts/styles/superpowers.md` output style was removed** (commit on dev: `refactor(superpowers): single source of truth for meta-rule`). The meta-rule lives only in `superpowers-using-superpowers/SKILL.md` now — invoke on demand via the `skill` tool, no `/style superpowers` entry point. References below to that style are kept for context but should not be used as a target architecture.
+- All 14 skill names are now namespaced as `superpowers-<name>` (commit `refactor(superpowers): namespace skill names with superpowers- prefix`) — the bare `<name>` form no longer resolves.
+- This doc is preserved as a record of the original plan; do not re-introduce the output style or bare-name convention based on what it says below.
 
 ## Goal
 
