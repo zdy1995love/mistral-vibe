@@ -75,6 +75,9 @@ from vibe.core.telemetry.types import (
     TelemetryCallType,
     TelemetryRequestMetadata,
 )
+from vibe.core.teleport.errors import ServiceTeleportError
+from vibe.core.teleport.telemetry import TeleportTelemetryTracker
+from vibe.core.teleport.types import TeleportCompleteEvent
 from vibe.core.tools.base import (
     BaseTool,
     InvokeContext,
@@ -235,9 +238,18 @@ def _sanitize_tool_call_arguments(message: LLMMessage) -> LLMMessage:
 
 def _is_non_retryable_error(e: BaseException) -> bool:
     # Detect Temporal-style ``non_retryable`` flag without importing temporalio.
-    # Wrapping such an exception in a plain RuntimeError strips the flag, so
-    # Temporal's activity retry policy will retry the call until exhaustion.
-    return bool(getattr(e, "non_retryable", False))
+    # Walks ``__cause__`` so an ``ActivityError`` whose cause is a non-retryable
+    # ``ApplicationError`` is detected too — that's what callers driving the
+    # agent loop from a Temporal activity will see when a sub-activity has
+    # already failed terminally.
+    seen: set[int] = set()
+    current: BaseException | None = e
+    while current is not None and id(current) not in seen:
+        if getattr(current, "non_retryable", False):
+            return True
+        seen.add(id(current))
+        current = current.__cause__
+    return False
 
 
 def _generate_synthetic_tool_call_id() -> str:
@@ -691,6 +703,9 @@ class AgentLoop:
     def emit_ready_telemetry(self, init_duration_ms: int) -> None:
         self.telemetry_client.send_ready(init_duration_ms=init_duration_ms)
 
+    def emit_session_closed_telemetry(self) -> None:
+        self.telemetry_client.send_session_closed()
+
     def _create_connector_registry(self) -> ConnectorRegistry | None:
         if not connectors_enabled():
             return None
@@ -779,16 +794,25 @@ class AgentLoop:
     async def teleport_to_vibe_code(
         self, prompt: str | None
     ) -> AsyncGenerator[TeleportYieldEvent, TeleportPushResponseEvent | None]:
-        from vibe.core.teleport.errors import ServiceTeleportError
         from vibe.core.teleport.nuage import TeleportSession
 
+        session_messages = [
+            msg.model_dump(exclude_none=True) for msg in self.messages[1:]
+        ]
+        telemetry_tracker = TeleportTelemetryTracker(
+            telemetry_client=self.telemetry_client,
+            nb_session_messages=len(session_messages),
+            stage="no_history"
+            if prompt is None and not session_messages
+            else "git_check",
+        )
         session = TeleportSession(
             metadata={
                 "agent": self.agent_profile.name,
                 "model": self.config.active_model,
                 "stats": self.stats.model_dump(),
             },
-            messages=[msg.model_dump(exclude_none=True) for msg in self.messages[1:]],
+            messages=session_messages,
         )
         try:
             async with self.teleport_service:
@@ -797,12 +821,23 @@ class AgentLoop:
                 while True:
                     try:
                         event = await gen.asend(response)
+                        telemetry_tracker.record_event(event)
+                        if isinstance(event, TeleportCompleteEvent):
+                            telemetry_tracker.send_success()
                         response = yield event
                     except StopAsyncIteration:
                         break
         except ServiceTeleportError as e:
+            telemetry_tracker.record_service_error(e)
             raise TeleportError(str(e)) from e
+        except (asyncio.CancelledError, GeneratorExit):
+            telemetry_tracker.record_cancelled()
+            raise
+        except Exception as e:
+            telemetry_tracker.record_unexpected_error(e)
+            raise
         finally:
+            telemetry_tracker.send_failure_if_needed()
             self._teleport_service = None
 
     def _setup_middleware(self) -> None:
@@ -920,6 +955,8 @@ class AgentLoop:
                     old_context_tokens=old_tokens,
                     new_context_tokens=new_tokens,
                     summary_length=len(summary),
+                    old_session_id=old_session_id,
+                    new_session_id=self.session_id,
                 )
 
             case MiddlewareAction.CONTINUE:
@@ -1863,8 +1900,9 @@ class AgentLoop:
                     responded_ids: set[str] = set()
                     j = i + 1
                     while j < len(self.messages) and self.messages[j].role == "tool":
-                        if self.messages[j].tool_call_id:
-                            responded_ids.add(self.messages[j].tool_call_id)
+                        tool_call_id = self.messages[j].tool_call_id
+                        if tool_call_id is not None:
+                            responded_ids.add(tool_call_id)
                         j += 1
 
                     if len(responded_ids) < expected_responses:
@@ -1899,6 +1937,7 @@ class AgentLoop:
 
     def _reset_session(self, keep_parent: bool = True) -> None:
         old_session_id = self.session_id
+        self.emit_session_closed_telemetry()
         suffix = extract_suffix(self.session_id)
         self.session_id = generate_session_id(suffix=suffix)
         parent_session_id = old_session_id if keep_parent else None

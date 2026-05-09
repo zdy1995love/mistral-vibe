@@ -204,3 +204,19 @@ class TestAgentManager:
 
         assert "good" in manager.available_agents
         assert "broken" not in manager.available_agents
+
+    def test_initial_agent_raises_when_agent_is_disabled(self) -> None:
+        config = build_test_vibe_config(
+            include_project_context=False,
+            include_prompt_detail=False,
+            disabled_agents=["plan"],
+        )
+        with pytest.raises(ValueError, match="not available"):
+            AgentManager(lambda: config, initial_agent="plan")
+
+    def test_initial_agent_raises_when_agent_does_not_exist(self) -> None:
+        config = build_test_vibe_config(
+            include_project_context=False, include_prompt_detail=False
+        )
+        with pytest.raises(ValueError, match="not found"):
+            AgentManager(lambda: config, initial_agent="nonexistent-agent")

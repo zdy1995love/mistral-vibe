@@ -146,3 +146,13 @@ class TestCommandRegistry:
         assert cmd_name == "style"
         assert cmd_args == "concise"
         assert command.handler == "_set_output_style"
+
+    def test_loop_command_registration(self) -> None:
+        registry = CommandRegistry()
+        assert registry.get_command_name("/loop") == "loop"
+        result = registry.parse_command("/loop 30s ping")
+        assert result is not None
+        cmd_name, cmd, cmd_args = result
+        assert cmd_name == "loop"
+        assert cmd.handler == "_loop_command"
+        assert cmd_args == "30s ping"
