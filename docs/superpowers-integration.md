@@ -8,7 +8,7 @@ Status: **historical**. Sprints 1–2 shipped on `dev`; Sprints 3–5 deferred. 
 
 ## Goal
 
-Make obra/superpowers run end-to-end inside mistral-vibe with the same fidelity as on Claude Code — every skill should be functionally usable, not just textually present. "Perfect" means: a fresh install of mistral-vibe + a one-line setup yields a working `/style superpowers` experience where all 14 skills (including `subagent-driven-development`) execute without "the agent profile doesn't exist" errors.
+Make obra/superpowers run end-to-end inside mistral-vibe with the same fidelity as on Claude Code — every skill should be functionally usable, not just textually present. "Perfect" means: a fresh install of mistral-vibe + a one-line setup yields a working setup where all 14 skills (including `subagent-driven-development`) execute without "the agent profile doesn't exist" errors. (Original plan invoked the meta-rule via `/style superpowers`; the shipped version invokes it via the `superpowers-using-superpowers` skill on demand — see status header.)
 
 ## Reference reading
 
@@ -22,9 +22,11 @@ Before iterating on this plan, the following references shaped its design:
 
 The role identity in `subagent-driven-development` ("implementer", "spec-reviewer", etc.) is conveyed by the **prompt template content** (e.g., `subagent-driven-development/implementer-prompt.md`), not by a dedicated agent profile. The parent dispatches with `agent=general-purpose` and stuffs the template into the `task` arg.
 
-## What's already done (migrated to this branch)
+## What was originally migrated (historical)
 
-1. **Built-in output style** at `vibe/core/prompts/styles/superpowers.md` — meta-discipline (1% rule, red-flags table, vibe tool mapping).
+> The list below describes what landed during the initial port. Item 1 has since been removed; items 2–3 still apply. See the status header at the top of this doc for the current architecture.
+
+1. ~~**Built-in output style** at `vibe/core/prompts/styles/superpowers.md`~~ — **removed**. The meta-discipline now lives only in the `superpowers-using-superpowers` skill (load on demand via the `skill` tool).
 2. **Translation scripts** at `scripts/superpowers/` — idempotent rewrites for a fresh `obra/superpowers` clone.
 3. **Vendor tree** at `~/.vibe/vendor/superpowers/` (user-side, `vibe-port` branch with translation commits).
 
@@ -107,11 +109,10 @@ Steps:
 1. Resolve install dir (default `~/.vibe/vendor/superpowers`).
 2. If absent: `git clone https://github.com/obra/superpowers.git <dir>`.
    If present: `git fetch origin && git rebase origin/main vibe-port`.
-3. Run `python3 scripts/superpowers/01-tool-names.py` → `02-namespace-and-prose.py` → `03-template-vs-agent.py`.
+3. Run `uv run python scripts/superpowers/01-tool-names.py` → `02-namespace-and-prose.py` → `03-template-vs-agent.py`.
 4. `git -C <dir> commit -am "vibe-port: translation"` on `vibe-port` branch.
 5. Patch `~/.vibe/config.toml` (idempotent, with `.bak.<ts>` backup):
    - `skill_paths` += `<dir>/skills`
-   - Optionally prompt: set `output_style = "superpowers"`?
 6. Verify: load skills via `SkillManager`; expect 14 + 1 builtin; print summary.
 
 **Implementation file:** `vibe/cli/commands/superpowers.py`. Hook into argparse in `vibe/cli/entrypoint.py`.
@@ -133,7 +134,7 @@ CHANGELOG.md                                      — entry
 
 ```
 [ALREADY MIGRATED]
-vibe/core/prompts/styles/superpowers.md
+vibe/core/prompts/styles/superpowers.md           (since deleted — see status header)
 scripts/superpowers/{01-tool-names,02-namespace-and-prose}.py
 scripts/superpowers/README.md
 docs/superpowers-integration.md   ← this file
@@ -224,8 +225,8 @@ rm -rf ~/.vibe/vendor/superpowers
 vibe superpowers install
 # expects: skills cloned, translated, config patched, "14 skills loaded"
 
-# 2. activate style
-vibe -p "/style superpowers" --output text
+# 2. load the meta-rule skill
+vibe -p "/superpowers-using-superpowers" --output text
 
 # 3. inline workflow (no subagents)
 vibe -p "use brainstorming skill to plan a hello-world feature" --max-turns 5

@@ -11,11 +11,13 @@ plugin-namespace prefixes.
 cd ~/.vibe/vendor/superpowers
 git fetch upstream
 git rebase upstream/main vibe-port
-# If translation is partially lost during rebase:
-python3 scripts/superpowers/01-tool-names.py
-python3 scripts/superpowers/02-namespace-and-prose.py
-git add -A && git commit --amend --no-edit
+# If translation is partially lost during rebase, replay it:
+uv run python scripts/superpowers/01-tool-names.py
+uv run python scripts/superpowers/02-namespace-and-prose.py
+git add -A && git commit -m "vibe-port: replay translation"
 ```
+
+Per `AGENTS.md`: always go through `uv`, and never `git commit --amend`.
 
 ## Scripts
 

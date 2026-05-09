@@ -27,7 +27,7 @@ If CLAUDE.md, GEMINI.md, or AGENTS.md says "don't use TDD" and a skill says "alw
 
 ## How to Access Skills
 
-Use the `skill` tool with the bare skill name (e.g. `name="superpowers-brainstorming"`, no plugin prefix). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
+Use the `skill` tool with the canonical skill name (e.g. `name="superpowers-brainstorming"`). The skill body is injected into context — follow it directly. Never use `read_file` on SKILL.md files.
 
 Skills are also user-invocable as `/<skill-name>` slash commands.
 
