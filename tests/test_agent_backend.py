@@ -17,11 +17,8 @@ from tests.conftest import (
 )
 from tests.mock.utils import mock_llm_chunk
 from tests.stubs.fake_backend import FakeBackend
-from vibe.core.agents.models import BuiltinAgentName
 from vibe.core.config import ModelConfig, ProviderConfig, VibeConfig
-from vibe.core.telemetry.types import EntrypointMetadata
-from vibe.core.tools.base import BaseToolConfig, ToolPermission
-from vibe.core.types import Backend, FunctionCall, Role, ToolCall
+from vibe.core.types import Backend
 
 
 def _two_model_vibe_config(active_model: str) -> VibeConfig:
