@@ -112,11 +112,7 @@ def render_stat_overview(stats: AgentStats, max_context: int) -> RenderableType:
 
     body = Group(columns, Text(""), context_line)
     return Panel(
-        body,
-        title="Stat",
-        box=box.SQUARE,
-        border_style="bright_black",
-        padding=(1, 2),
+        body, title="Stat", box=box.SQUARE, border_style="bright_black", padding=(1, 2)
     )
 
 
@@ -128,9 +124,21 @@ class StatOverviewMessage(Static):
         self.add_class("stat-overview-message")
         self._stats = stats
         self._max_context = max_context
+        self._body: Static | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="stat-overview-container"):
             yield ExpandingBorder(classes="stat-overview-border")
             with Vertical(classes="stat-overview-content"):
-                yield Static(render_stat_overview(self._stats, self._max_context))
+                self._body = Static(
+                    render_stat_overview(self._stats, self._max_context)
+                )
+                yield self._body
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self._refresh)
+
+    def _refresh(self) -> None:
+        if self._body is None:
+            return
+        self._body.update(render_stat_overview(self._stats, self._max_context))
