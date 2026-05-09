@@ -220,3 +220,7 @@ snapshot_report.html
 mistral-update-compare-to-dev.md
 vibe-cc-qwen-comparison.md
 vibe-optimization-follow-cc.md
+
+# Local-only working files
+.codex
+gh-install.sh
