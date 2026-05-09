@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Container, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import DataTable, Label, Static
 
@@ -36,7 +37,16 @@ def _cache_pct(cached: int, prompt: int) -> int:
     return round(100 * cached / prompt)
 
 
-_FULL_COLUMNS = ("#", "Input", "Cached", "sparkline", "Cache%", "Output", "Duration", "tools")
+_FULL_COLUMNS = (
+    "#",
+    "Input",
+    "Cached",
+    "sparkline",
+    "Cache%",
+    "Output",
+    "Duration",
+    "tools",
+)
 _MEDIUM_COLUMNS = ("#", "Input", "Cached", "Cache%", "Output", "Duration", "tools")
 _NARROW_COLUMNS = ("#", "Input", "Cached", "Cache%", "Output", "Duration")
 
@@ -101,10 +111,7 @@ class StatTimelineApp(Container):
         pct = _cache_pct(
             self._stats.session_cached_tokens, self._stats.session_prompt_tokens
         )
-        return (
-            f"Per-turn timeline · {len(self._stats.turns)} turns "
-            f"· {pct}% cache hit"
-        )
+        return f"Per-turn timeline · {len(self._stats.turns)} turns · {pct}% cache hit"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="stat-timeline-root"):
@@ -116,16 +123,19 @@ class StatTimelineApp(Container):
             yield DataTable(id="stat-timeline-table")
 
     def on_mount(self) -> None:
-        self._refresh()
-        # Live-update while the panel is open. Textual auto-stops the timer
-        # when the widget is unmounted.
+        # Defer first refresh by a frame so self.size.width reflects layout
+        # instead of zero (which would lock _FULL_COLUMNS via `width or 100`).
+        self.call_after_refresh(self._refresh)
         self.set_interval(1.0, self._refresh)
 
     def _refresh(self) -> None:
         turns = self._stats.turns
-        empty = self.query_one("#stat-timeline-empty", Static)
-        table = self.query_one(DataTable)
-        header = self.query_one("#stat-timeline-header", Label)
+        try:
+            empty = self.query_one("#stat-timeline-empty", Static)
+            table = self.query_one(DataTable)
+            header = self.query_one("#stat-timeline-header", Label)
+        except NoMatches:
+            return
 
         header.update(self._header_text())
 
@@ -144,7 +154,7 @@ class StatTimelineApp(Container):
                 table.add_column(col)
 
         if len(turns) > self._known_turn_count:
-            for rec in turns[self._known_turn_count:]:
+            for rec in turns[self._known_turn_count :]:
                 table.add_row(*_row_for(rec, self._columns))
             self._known_turn_count = len(turns)
 
