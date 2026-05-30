@@ -1455,8 +1455,10 @@ class AgentLoop:  # noqa: PLR0904
         self.stats.last_turn_duration = time_seconds
         self.stats.last_turn_prompt_tokens = usage.prompt_tokens
         self.stats.last_turn_completion_tokens = usage.completion_tokens
+        self.stats.last_turn_cached_tokens = usage.cached_prompt_tokens
         self.stats.session_prompt_tokens += usage.prompt_tokens
         self.stats.session_completion_tokens += usage.completion_tokens
+        self.stats.session_cached_tokens += usage.cached_prompt_tokens
         self.stats.context_tokens = usage.prompt_tokens + usage.completion_tokens
         if time_seconds > 0 and usage.completion_tokens > 0:
             self.stats.tokens_per_second = usage.completion_tokens / time_seconds

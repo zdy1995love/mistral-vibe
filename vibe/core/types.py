@@ -48,6 +48,7 @@ class AgentStats(BaseModel):
     steps: int = 0
     session_prompt_tokens: int = 0
     session_completion_tokens: int = 0
+    session_cached_tokens: int = 0
     tool_calls_agreed: int = 0
     tool_calls_rejected: int = 0
     tool_calls_failed: int = 0
@@ -57,6 +58,7 @@ class AgentStats(BaseModel):
 
     last_turn_prompt_tokens: int = 0
     last_turn_completion_tokens: int = 0
+    last_turn_cached_tokens: int = 0
     last_turn_duration: float = 0.0
     tokens_per_second: float = 0.0
 
@@ -134,6 +136,7 @@ class AgentStats(BaseModel):
         self.context_tokens = 0
         self.last_turn_prompt_tokens = 0
         self.last_turn_completion_tokens = 0
+        self.last_turn_cached_tokens = 0
         self.last_turn_duration = 0.0
         self.tokens_per_second = 0.0
 
@@ -333,11 +336,13 @@ class LLMUsage(BaseModel):
     model_config = ConfigDict(frozen=True)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_prompt_tokens: int = 0
 
     def __add__(self, other: LLMUsage) -> LLMUsage:
         return LLMUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            cached_prompt_tokens=self.cached_prompt_tokens + other.cached_prompt_tokens,
         )
 
 
