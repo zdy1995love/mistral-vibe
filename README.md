@@ -24,6 +24,9 @@ Mistral Vibe is a command-line coding assistant powered by Mistral's models. It 
 > [!WARNING]
 > Mistral Vibe works on Windows, but we officially support and target UNIX environments.
 
+> [!NOTE]
+> This is a **personal fork** — a clean-room port of custom features onto the upstream **v2.13.0** baseline. See [Fork customizations](#fork-customizations-clean-room-v213-port) for what differs from stock Vibe.
+
 ### One-line install (recommended)
 
 **Linux and macOS**
@@ -87,6 +90,7 @@ pip install mistral-vibe
 - [Editors/IDEs](#editorsides)
 - [Resources](#resources)
 - [Data collection & usage](#data-collection--usage)
+- [Fork customizations (clean-room v2.13 port)](#fork-customizations-clean-room-v213-port)
 - [License](#license)
 
 ## Features
@@ -377,6 +381,17 @@ Vibe discovers skills from multiple locations:
 
 ```toml
 skill_paths = ["/path/to/custom/skills"]
+```
+
+#### Namespace folders
+
+A directory that has **no** `SKILL.md` of its own but contains skill subfolders is treated as a *namespace*: Vibe descends one level and loads each `<namespace>/<skill>/SKILL.md`. Every skill keeps the `name` from its own frontmatter, so the subfolder name is purely organizational and a whole related set can live under one tidy folder instead of many sibling directories. The bundled superpowers skills use this layout:
+
+```
+~/.agents/skills/superpowers/
+├── brainstorming/SKILL.md          # name: superpowers-brainstorming
+├── systematic-debugging/SKILL.md   # name: superpowers-systematic-debugging
+└── …                               # 14 skills, invoked as /superpowers-<name>
 ```
 
 ### Managing Skills
@@ -693,6 +708,27 @@ Mistral Vibe can be used in text editors and IDEs that support [Agent Client Pro
 
 Use of Vibe is subject to our [Privacy Policy](https://legal.mistral.ai/terms/privacy-policy) and may include the collection and processing of data related to your use of the service, such as usage data, to operate, maintain, and improve Vibe. You can disable telemetry in your `config.toml` by setting `enable_telemetry = false`.
 
+
+## Fork customizations (clean-room v2.13 port)
+
+This repository is a personal fork. Rather than chain-merging the previous fork (based on v2.9.x) up to v2.13, its custom features were **re-ported clean** onto a fresh upstream **v2.13.0** baseline — each feature landing as an independently tested commit. Everything below is additive to stock Vibe; no upstream dependency was downgraded.
+
+**Local-model & inference**
+- Cached-prompt-token accounting and two-tier reasoning with a `thinking`↔temperature coupling.
+- vLLM-friendly streaming extractors (think-tag / Mistral tool-call text) and `reasoning_effort` plumbing.
+
+**UX & workflow**
+- Output styles (`/style`) and an interactive `/agents` picker + editor with live reload.
+- Per-turn stats (`/stat` overview + timeline) and a plaintext streaming renderer.
+- Telemetry hard-off and layered (project/user) configuration.
+
+**Context & planning**
+- Microcompaction — drop stale tool results before a full compaction pass.
+- Hybrid **plan mode** layered on Vibe's native plan session: a `mutates_state` write-gate (the current plan file is always writable), fork-to-`dev` on exit, sparse reminders, a `/plan` toggle, and a plan-mode indicator.
+
+**Bundled superpowers skills**
+- 14 [superpowers](https://github.com/obra/superpowers) skills (MIT) vendored as a single namespace folder. At runtime they load from `~/.agents/skills/superpowers/<name>/` (see [Skill Discovery](#skill-discovery)) and are invoked as `/superpowers-<name>` (e.g. `/superpowers-brainstorming`).
+- A version-controlled backup of that folder is tracked at [`superpowers/`](superpowers/) in this repo. It exists purely for backup/review — the *runtime* copy is the one under `~/.agents/skills/`.
 
 ## License
 
