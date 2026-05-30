@@ -180,6 +180,11 @@ class ProviderConfig(BaseModel):
     project_id: str = ""
     region: str = ""
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    # Local-model (vLLM) knobs. send_thinking_blocks echoes prior assistant
+    # reasoning back into the request; parse_text_tool_calls parses tool calls
+    # emitted as plain text by models that don't return native tool_calls.
+    send_thinking_blocks: bool = False
+    parse_text_tool_calls: bool = False
 
     def _is_legacy_mistral_provider_without_backend(self) -> bool:
         return (
@@ -361,6 +366,13 @@ def _default_alias_to_name(data: Any) -> Any:
 
 ThinkingLevel = Literal["off", "low", "medium", "high", "max"]
 THINKING_LEVELS: list[str] = list(get_args(ThinkingLevel))
+
+# Temperature coupling (local-model behavior ported from the fork): toggling
+# thinking shifts the active model's temperature in lockstep. Only the two
+# levels the fork cared about are mapped — "high" (0.7) encourages exploratory
+# reasoning, "off" (0.3) keeps outputs deterministic. Intermediate native
+# levels (low/medium/max) keep the model's configured temperature unchanged.
+_THINKING_TEMPERATURE: dict[str, float] = {"off": 0.3, "high": 0.7}
 
 
 class ModelConfig(BaseModel):
@@ -950,11 +962,19 @@ class VibeConfig(BaseSettings):
         return self
 
     def set_thinking(self, level: ThinkingLevel) -> None:
+        # Local-model temperature coupling (ported from fork): off/high also
+        # shift the active model's temperature; intermediate native levels
+        # (low/medium/max) leave the configured temperature unchanged.
+        temperature = _THINKING_TEMPERATURE.get(level)
         model = self.get_active_model()
+
+        model_update: dict[str, Any] = {"thinking": level}
+        if temperature is not None:
+            model_update["temperature"] = temperature
 
         for i, m in enumerate(self.models):
             if m.alias == model.alias:
-                self.models[i] = m.model_copy(update={"thinking": level})
+                self.models[i] = m.model_copy(update=model_update)
                 break
 
         current_config = TomlFileSettingsSource(type(self)).toml_data
@@ -962,19 +982,23 @@ class VibeConfig(BaseSettings):
         for entry in models:
             if entry.get("alias", entry.get("name")) == model.alias:
                 entry["thinking"] = level
+                if temperature is not None:
+                    entry["temperature"] = temperature
                 break
         else:
             # Model comes from defaults; materialize the full list so we
             # don't lose the other models.
-            models = [
-                {
+            models = []
+            for m in self.models:
+                entry = {
                     "alias": m.alias,
                     "name": m.name,
                     "provider": m.provider,
                     "thinking": level if m.alias == model.alias else m.thinking,
                 }
-                for m in self.models
-            ]
+                if temperature is not None and m.alias == model.alias:
+                    entry["temperature"] = temperature
+                models.append(entry)
         type(self).save_updates({"models": models})
 
     def add_tool_allowlist_patterns(self, tool_name: str, patterns: list[str]) -> None:

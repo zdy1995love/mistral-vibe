@@ -309,6 +309,71 @@ class TestSetThinking:
         assert result["models"][0].get("thinking") is None
         assert result["models"][1]["thinking"] == "max"
 
+    def test_high_couples_temperature_up(self, config_dir: Path) -> None:
+        config_file = config_dir / "config.toml"
+        data = {
+            "active_model": "my-model",
+            "models": [
+                {"name": "my-model", "provider": "mistral", "alias": "my-model"}
+            ],
+        }
+        with config_file.open("wb") as f:
+            tomli_w.dump(data, f)
+
+        cfg = VibeConfig.load()
+        cfg.set_thinking("high")
+
+        reloaded = VibeConfig.load()
+        assert reloaded.get_active_model().temperature == 0.7
+        with config_file.open("rb") as f:
+            result = tomllib.load(f)
+        assert result["models"][0]["temperature"] == 0.7
+
+    def test_off_couples_temperature_down(self, config_dir: Path) -> None:
+        config_file = config_dir / "config.toml"
+        data = {
+            "active_model": "my-model",
+            "models": [
+                {"name": "my-model", "provider": "mistral", "alias": "my-model"}
+            ],
+        }
+        with config_file.open("wb") as f:
+            tomli_w.dump(data, f)
+
+        cfg = VibeConfig.load()
+        cfg.set_thinking("off")
+
+        reloaded = VibeConfig.load()
+        assert reloaded.get_active_model().temperature == 0.3
+        with config_file.open("rb") as f:
+            result = tomllib.load(f)
+        assert result["models"][0]["temperature"] == 0.3
+
+    def test_intermediate_level_leaves_temperature_unchanged(
+        self, config_dir: Path
+    ) -> None:
+        config_file = config_dir / "config.toml"
+        data = {
+            "active_model": "my-model",
+            "models": [
+                {
+                    "name": "my-model",
+                    "provider": "mistral",
+                    "alias": "my-model",
+                    "temperature": 0.5,
+                }
+            ],
+        }
+        with config_file.open("wb") as f:
+            tomli_w.dump(data, f)
+
+        cfg = VibeConfig.load()
+        cfg.set_thinking("max")
+
+        reloaded = VibeConfig.load()
+        assert reloaded.get_active_model().thinking == "max"
+        assert reloaded.get_active_model().temperature == 0.5
+
 
 class TestMigrateLeavesFindInBashAllowlist:
     def test_keeps_find_in_config_file(
