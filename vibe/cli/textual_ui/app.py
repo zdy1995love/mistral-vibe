@@ -99,6 +99,8 @@ from vibe.cli.textual_ui.widgets.proxy_setup_app import ProxySetupApp
 from vibe.cli.textual_ui.widgets.question_app import QuestionApp
 from vibe.cli.textual_ui.widgets.rewind_app import RewindApp
 from vibe.cli.textual_ui.widgets.session_picker import SessionPickerApp
+from vibe.cli.textual_ui.widgets.stat_overview import StatOverviewMessage
+from vibe.cli.textual_ui.widgets.stat_timeline import StatTimelineApp
 from vibe.cli.textual_ui.widgets.teleport_message import TeleportMessage
 from vibe.cli.textual_ui.widgets.theme_picker import ThemePickerApp, sorted_theme_names
 from vibe.cli.textual_ui.widgets.thinking_picker import ThinkingPickerApp
@@ -234,6 +236,7 @@ class BottomApp(StrEnum):
     ModelPicker = auto()
     ProxySetup = auto()
     Question = auto()
+    StatTimeline = auto()
     ThemePicker = auto()
     ThinkingPicker = auto()
     Rewind = auto()
@@ -887,6 +890,11 @@ class VibeApp(App):  # noqa: PLR0904
 
     async def on_agents_picker_app_cancelled(
         self, _event: AgentsPickerApp.Cancelled
+    ) -> None:
+        await self._switch_to_input_app()
+
+    async def on_stat_timeline_app_cancelled(
+        self, _event: StatTimelineApp.Cancelled
     ) -> None:
         await self._switch_to_input_app()
 
@@ -1860,18 +1868,27 @@ class VibeApp(App):  # noqa: PLR0904
             )
         )
 
-    async def _show_status(self, **kwargs: Any) -> None:
-        stats = self.agent_loop.stats
-        status_text = f"""## Agent Statistics
+    async def _show_stat(self, cmd_args: str = "", **kwargs: Any) -> None:
+        arg = cmd_args.strip().lower()
+        if arg == "":
+            max_ctx = self.agent_loop.config.get_active_model().auto_compact_threshold
+            await self._mount_and_scroll(
+                StatOverviewMessage(stats=self.agent_loop.stats, max_context=max_ctx)
+            )
+        elif arg in {"timeline", "tl"}:
+            await self._switch_to_stat_timeline_app()
+        else:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    f"Unknown stat subcommand: {arg!r}. "
+                    "Try '/stat' or '/stat timeline'."
+                )
+            )
 
-- **Steps**: {stats.steps:,}
-- **Session Prompt Tokens**: {stats.session_prompt_tokens:,}
-- **Session Completion Tokens**: {stats.session_completion_tokens:,}
-- **Session Total LLM Tokens**: {stats.session_total_llm_tokens:,}
-- **Last Turn Tokens**: {stats.last_turn_total_tokens:,}
-- **Cost**: ${stats.session_cost:.4f}
-"""
-        await self._mount_and_scroll(UserCommandMessage(status_text))
+    async def _switch_to_stat_timeline_app(self) -> None:
+        if self._current_bottom_app == BottomApp.StatTimeline:
+            return
+        await self._switch_from_input(StatTimelineApp(stats=self.agent_loop.stats))
 
     async def _show_config(self, **kwargs: Any) -> None:
         """Switch to the configuration app in the bottom panel."""
@@ -2570,6 +2587,8 @@ class VibeApp(App):  # noqa: PLR0904
             match self._current_bottom_app:
                 case BottomApp.AgentsPicker:
                     self.query_one(AgentsPickerApp).focus()
+                case BottomApp.StatTimeline:
+                    self.query_one(StatTimelineApp).focus()
                 case BottomApp.Input:
                     self.query_one(ChatInputContainer).focus_input()
                 case BottomApp.Config:
@@ -2671,6 +2690,14 @@ class VibeApp(App):  # noqa: PLR0904
         try:
             agents_picker = self.query_one(AgentsPickerApp)
             agents_picker.post_message(AgentsPickerApp.Cancelled())
+        except Exception:
+            pass
+        self._last_escape_time = None
+
+    def _handle_stat_timeline_app_escape(self) -> None:
+        try:
+            stat_timeline = self.query_one(StatTimelineApp)
+            stat_timeline.post_message(StatTimelineApp.Cancelled())
         except Exception:
             pass
         self._last_escape_time = None
@@ -2900,7 +2927,7 @@ class VibeApp(App):  # noqa: PLR0904
             pass
         self._last_escape_time = None
 
-    def _try_interrupt_bottom_app_escape(self) -> bool:
+    def _try_interrupt_bottom_app_escape(self) -> bool:  # noqa: PLR0912
         if self._current_bottom_app == BottomApp.Config:
             self._handle_config_app_escape()
         elif self._current_bottom_app == BottomApp.Voice:
@@ -2917,6 +2944,8 @@ class VibeApp(App):  # noqa: PLR0904
             self._handle_question_app_escape()
         elif self._current_bottom_app == BottomApp.AgentsPicker:
             self._handle_agents_picker_app_escape()
+        elif self._current_bottom_app == BottomApp.StatTimeline:
+            self._handle_stat_timeline_app_escape()
         elif self._current_bottom_app == BottomApp.ModelPicker:
             self._handle_model_picker_app_escape()
         elif self._current_bottom_app == BottomApp.ThemePicker:

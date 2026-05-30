@@ -1347,6 +1347,70 @@ NarratorStatus {
     scrollbar-size: 1 1;
 }
 
+.stat-overview-message {
+    margin-top: 0;
+    margin-bottom: 0;
+    height: auto;
+    width: 100%;
+}
+
+.stat-overview-container {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+}
+
+.stat-overview-border {
+    width: auto;
+    height: 100%;
+    padding: 0 1 0 2;
+    color: $foreground-muted;
+}
+
+.stat-overview-content {
+    width: 1fr;
+    height: auto;
+    margin: 0;
+}
+
+#stattimeline-app {
+    width: 100%;
+    height: auto;
+    background: transparent;
+    border: solid $foreground-muted;
+    padding: 0 1;
+    margin: 0;
+}
+
+#stat-timeline-root {
+    width: 100%;
+    height: auto;
+}
+
+#stat-timeline-header {
+    height: auto;
+    text-style: bold;
+    color: $primary;
+}
+
+#stat-timeline-empty {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    margin-top: 1;
+}
+
+#stat-timeline-table {
+    width: 100%;
+    max-height: 30vh;
+    margin-top: 1;
+}
+
+#stat-timeline-table:focus {
+    border: none;
+}
+
 #agentspicker-app {
     width: 100%;
     height: auto;
