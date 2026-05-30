@@ -122,6 +122,7 @@ from vibe.core.types import (
     ToolCallEvent,
     ToolResultEvent,
     ToolStreamEvent,
+    TurnRecord,
     UserInputCallback,
     UserMessageEvent,
 )
@@ -1292,6 +1293,7 @@ class AgentLoop:  # noqa: PLR0904
                 return
 
             self.stats.tool_calls_agreed += 1
+            self._record_dispatched_tool(tool_call.tool_name)
 
             snapshot = tool_instance.get_file_snapshot(tool_call.validated_args)
             if snapshot is not None:
@@ -1621,6 +1623,16 @@ class AgentLoop:  # noqa: PLR0904
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
             ) from e
 
+    def _record_dispatched_tool(self, tool_name: str) -> None:
+        """Append a dispatched tool's name onto the current turn's record.
+
+        Real flow: _update_stats runs first (inside _chat) and creates the
+        TurnRecord; tool dispatch then calls this. So the tool always lands
+        on the most recent turn.
+        """
+        if self.stats.turns:
+            self.stats.turns[-1].tools.append(tool_name)
+
     def _update_stats(self, usage: LLMUsage, time_seconds: float) -> None:
         self.stats.last_turn_duration = time_seconds
         self.stats.last_turn_prompt_tokens = usage.prompt_tokens
@@ -1632,6 +1644,17 @@ class AgentLoop:  # noqa: PLR0904
         self.stats.context_tokens = usage.prompt_tokens + usage.completion_tokens
         if time_seconds > 0 and usage.completion_tokens > 0:
             self.stats.tokens_per_second = usage.completion_tokens / time_seconds
+
+        self.stats.turns.append(
+            TurnRecord(
+                index=self.stats.steps,
+                prompt_tokens=usage.prompt_tokens,
+                cached_tokens=usage.cached_prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                duration=time_seconds,
+                started_at=time.time() - time_seconds,
+            )
+        )
 
     async def _should_execute_tool(
         self, tool: BaseTool, args: BaseModel, tool_call_id: str
