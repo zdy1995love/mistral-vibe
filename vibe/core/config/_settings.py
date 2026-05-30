@@ -522,7 +522,10 @@ class VibeConfig(BaseSettings):
     active_transcribe_model: str = "voxtral-realtime"
     active_tts_model: str = "voxtral-tts"
     bypass_tool_permissions: bool = False
-    enable_telemetry: bool = True
+    # Telemetry is hard-disabled in this fork (see TelemetryClient._is_enabled,
+    # which ignores this flag at runtime). Defaulting to False also keeps otel
+    # tracing (setup_tracing) and the experiments layer off by default.
+    enable_telemetry: bool = False
     experiment_overrides: dict[str, str] = Field(default_factory=dict)
     system_prompt_id: str = "cli"
     compaction_prompt_id: str = "compact"
