@@ -1320,17 +1320,37 @@ class AgentLoop:  # noqa: PLR0904
         ):
             allowlisted = False
             if tool_call.tool_name in _PLAN_GATE_BYPASS_TOOLS:
-                permission_ctx: PermissionContext | None = None
-                try:
-                    permission_ctx = tool_instance.resolve_permission(
-                        tool_call.validated_args
+                # The current plan file is ALWAYS writable in PLAN — authoring it
+                # is the whole point of plan mode. Check the target path directly
+                # so this never depends on whether the write_file/search_replace
+                # plans-allowlist was applied to the tool config at this instant
+                # (that resolution proved fragile in practice). bash has no
+                # path/file_path arg, so it falls through to resolve_permission
+                # (its read-only command allowlist) below.
+                args_path = getattr(
+                    tool_call.validated_args, "path", None
+                ) or getattr(tool_call.validated_args, "file_path", None)
+                if args_path is not None:
+                    try:
+                        if (
+                            Path(args_path).resolve()
+                            == self._plan_session.plan_file_path.resolve()
+                        ):
+                            allowlisted = True
+                    except (OSError, ValueError):
+                        pass
+                if not allowlisted:
+                    permission_ctx: PermissionContext | None = None
+                    try:
+                        permission_ctx = tool_instance.resolve_permission(
+                            tool_call.validated_args
+                        )
+                    except Exception:
+                        permission_ctx = None
+                    allowlisted = (
+                        permission_ctx is not None
+                        and permission_ctx.permission == ToolPermission.ALWAYS
                     )
-                except Exception:
-                    permission_ctx = None
-                allowlisted = (
-                    permission_ctx is not None
-                    and permission_ctx.permission == ToolPermission.ALWAYS
-                )
             elif tool_call.tool_name == "task":
                 target_agent_name = getattr(tool_call.validated_args, "agent", None)
                 if target_agent_name:
