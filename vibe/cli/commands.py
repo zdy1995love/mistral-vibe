@@ -179,6 +179,14 @@ class CommandRegistry:
                 description="Select theme",
                 handler="_show_theme",
             ),
+            "style": Command(
+                aliases=frozenset(["/style"]),
+                description=(
+                    "List output styles or switch the active one. "
+                    "Pass a name (e.g. `/style concise`) to switch."
+                ),
+                handler="_set_output_style",
+            ),
         }
 
     @property

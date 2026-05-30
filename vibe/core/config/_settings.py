@@ -539,6 +539,7 @@ class VibeConfig(BaseSettings):
     enable_system_trust_store: bool = False
     api_timeout: float = 720.0
     auto_compact_threshold: int = 200_000
+    output_style: str = "default"
 
     vibe_code_enabled: bool = Field(default=True, exclude=True)
     vibe_code_base_url: str = Field(default="https://api.mistral.ai", exclude=True)

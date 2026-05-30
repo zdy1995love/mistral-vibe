@@ -1793,6 +1793,44 @@ class VibeApp(App):  # noqa: PLR0904
             return
         await self._switch_to_theme_picker_app()
 
+    async def _set_output_style(self, cmd_args: str = "", **kwargs: Any) -> None:
+        from vibe.core.output_styles import StyleManager, StyleNotFoundError
+
+        mgr = StyleManager()
+        arg = cmd_args.strip()
+
+        if not arg:
+            current = self.config.output_style
+            lines = ["### Output styles", ""]
+            for info in mgr.list_styles_with_metadata(active=current):
+                marker = " *(active)*" if info.is_active else ""
+                src = " *(user)*" if info.source == "user" else ""
+                lines.append(f"- `{info.name}`{src}{marker}")
+            lines.append("")
+            lines.append("Switch with `/style <name>`.")
+            await self._mount_and_scroll(UserCommandMessage("\n".join(lines)))
+            return
+
+        try:
+            mgr.load(arg)
+        except StyleNotFoundError:
+            available = ", ".join(mgr.list_styles())
+            await self._mount_and_scroll(
+                ErrorMessage(f"Unknown output style `{arg}`. Available: {available}")
+            )
+            return
+
+        VibeConfig.save_updates({"output_style": arg})
+        self.agent_loop.refresh_config()
+        # Single canonical system-prompt rebuild path. Avoid inlining
+        # get_universal_system_prompt + messages.update_system_prompt — this
+        # helper centralizes both and respects @requires_init.
+        await self.agent_loop.refresh_system_prompt()
+
+        await self._mount_and_scroll(
+            UserCommandMessage(f"Output style is now `{arg}`.")
+        )
+
     async def _show_proxy_setup(self, **kwargs: Any) -> None:
         if self._current_bottom_app == BottomApp.ProxySetup:
             return
