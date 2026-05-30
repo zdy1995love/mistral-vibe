@@ -90,41 +90,67 @@ class SkillManager:
 
     def _discover_skills_in_dir(self, base: Path) -> dict[str, SkillInfo]:
         skills: dict[str, SkillInfo] = {}
-        for skill_dir in base.iterdir():
-            if not skill_dir.is_dir():
+        for entry in base.iterdir():
+            if not entry.is_dir():
                 continue
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.is_file():
+            skill_file = entry / "SKILL.md"
+            if skill_file.is_file():
+                info = self._try_load_skill(skill_file)
+                if info is not None:
+                    self._register_skill(skills, info)
                 continue
-            if (skill_info := self._try_load_skill(skill_file)) is None:
-                continue
-            if skill_info.name in BUILTIN_SKILLS:
-                logger.debug(
-                    "Skipping skill '%s' at %s because builtin skill names are reserved",
-                    skill_info.name,
-                    skill_info.skill_path,
-                )
-                continue
-            if skill_info.name in skills:
-                logger.debug(
-                    "Skipping duplicate skill '%s' at %s (already loaded from %s)",
-                    skill_info.name,
-                    skill_info.skill_path,
-                    skills[skill_info.name].skill_path,
-                )
-                continue
-            skills[skill_info.name] = skill_info
+            # No SKILL.md directly under ``entry``: treat it as a namespace
+            # folder and load skills one level down (e.g.
+            # ``superpowers/brainstorming/SKILL.md``). Each skill keeps the name
+            # from its own frontmatter, so cross-references between bundled
+            # skills stay valid; the directory name is purely organizational and
+            # need not match the skill name.
+            for nested in entry.iterdir():
+                if not nested.is_dir():
+                    continue
+                nested_file = nested / "SKILL.md"
+                if not nested_file.is_file():
+                    continue
+                info = self._try_load_skill(nested_file, validate_dirname=False)
+                if info is not None:
+                    self._register_skill(skills, info)
         return skills
 
-    def _try_load_skill(self, skill_file: Path) -> SkillInfo | None:
+    def _register_skill(
+        self, skills: dict[str, SkillInfo], skill_info: SkillInfo
+    ) -> None:
+        if skill_info.name in BUILTIN_SKILLS:
+            logger.debug(
+                "Skipping skill '%s' at %s because builtin skill names are reserved",
+                skill_info.name,
+                skill_info.skill_path,
+            )
+            return
+        if skill_info.name in skills:
+            logger.debug(
+                "Skipping duplicate skill '%s' at %s (already loaded from %s)",
+                skill_info.name,
+                skill_info.skill_path,
+                skills[skill_info.name].skill_path,
+            )
+            return
+        skills[skill_info.name] = skill_info
+
+    def _try_load_skill(
+        self, skill_file: Path, *, validate_dirname: bool = True
+    ) -> SkillInfo | None:
         try:
-            skill_info = self._parse_skill_file(skill_file)
+            skill_info = self._parse_skill_file(
+                skill_file, validate_dirname=validate_dirname
+            )
         except Exception as e:
             logger.warning("Failed to parse skill at %s: %s", skill_file, e)
             return None
         return skill_info
 
-    def _parse_skill_file(self, skill_path: Path) -> SkillInfo:
+    def _parse_skill_file(
+        self, skill_path: Path, *, validate_dirname: bool = True
+    ) -> SkillInfo:
         try:
             content = read_safe(skill_path).text
         except OSError as e:
@@ -134,7 +160,7 @@ class SkillManager:
         metadata = SkillMetadata.model_validate(frontmatter)
 
         skill_name_from_dir = skill_path.parent.name
-        if metadata.name != skill_name_from_dir:
+        if validate_dirname and metadata.name != skill_name_from_dir:
             logger.warning(
                 "Skill name '%s' doesn't match directory name '%s' at %s",
                 metadata.name,
