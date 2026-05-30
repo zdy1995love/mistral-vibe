@@ -10,16 +10,23 @@ import httpx
 
 from vibe.core.llm.backend.anthropic import AnthropicAdapter
 from vibe.core.llm.backend.base import APIAdapter, PreparedRequest
+from vibe.core.llm.backend.mistral_text_tool_call_extractor import (
+    CompletedToolCall,
+    MistralToolCallTextExtractor,
+)
 from vibe.core.llm.backend.openai_responses import OpenAIResponsesAdapter
 from vibe.core.llm.backend.reasoning_adapter import ReasoningAdapter
+from vibe.core.llm.backend.think_tag_extractor import ThinkTagExtractor
 from vibe.core.llm.exceptions import BackendErrorBuilder
 from vibe.core.types import (
     AvailableTool,
+    FunctionCall,
     LLMChunk,
     LLMMessage,
     LLMUsage,
     Role,
     StrToolChoice,
+    ToolCall,
 )
 from vibe.core.utils import async_generator_retry, async_retry
 from vibe.core.utils.http import build_ssl_context
@@ -39,12 +46,16 @@ class OpenAIAdapter(APIAdapter):
         tools: list[AvailableTool] | None,
         max_tokens: int | None,
         tool_choice: StrToolChoice | AvailableTool | None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload = {
             "model": model_name,
             "messages": converted_messages,
             "temperature": temperature,
         }
+
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
 
         if tools:
             payload["tools"] = [tool.model_dump(exclude_none=True) for tool in tools]
@@ -66,10 +77,31 @@ class OpenAIAdapter(APIAdapter):
         return headers
 
     def _reasoning_to_api(
-        self, msg_dict: dict[str, Any], field_name: str
+        self,
+        msg_dict: dict[str, Any],
+        field_name: str,
+        send_thinking_blocks: bool = False,
     ) -> dict[str, Any]:
-        if field_name != "reasoning_content" and "reasoning_content" in msg_dict:
-            msg_dict[field_name] = msg_dict.pop("reasoning_content")
+        if msg_dict.get("role") != "assistant":
+            msg_dict.pop("reasoning_content", None)
+            return msg_dict
+
+        reasoning = msg_dict.pop("reasoning_content", None)
+        if not reasoning:
+            return msg_dict
+
+        if send_thinking_blocks:
+            content = msg_dict.get("content") or ""
+            blocks: list[dict[str, Any]] = [{"type": "thinking", "thinking": reasoning}]
+            if content:
+                blocks.append({"type": "text", "text": content})
+            msg_dict["content"] = blocks
+            return msg_dict
+
+        if field_name != "reasoning_content":
+            msg_dict[field_name] = reasoning
+        else:
+            msg_dict["reasoning_content"] = reasoning
         return msg_dict
 
     def _reasoning_from_api(
@@ -94,6 +126,8 @@ class OpenAIAdapter(APIAdapter):
         thinking: str = "off",
     ) -> PreparedRequest:
         field_name = provider.reasoning_field_name
+        send_blocks = provider.send_thinking_blocks
+        reasoning_effort = thinking if thinking != "off" else None
         converted_messages = [
             self._reasoning_to_api(
                 msg.model_dump(
@@ -106,12 +140,19 @@ class OpenAIAdapter(APIAdapter):
                     },
                 ),
                 field_name,
+                send_thinking_blocks=send_blocks,
             )
             for msg in messages
         ]
 
         payload = self.build_payload(
-            model_name, converted_messages, temperature, tools, max_tokens, tool_choice
+            model_name,
+            converted_messages,
+            temperature,
+            tools,
+            max_tokens,
+            tool_choice,
+            reasoning_effort=reasoning_effort,
         )
 
         if enable_streaming:
@@ -164,6 +205,75 @@ class OpenAIAdapter(APIAdapter):
         )
 
         return LLMChunk(message=message, usage=usage)
+
+
+def _apply_think_extractor_oneshot(chunk: LLMChunk) -> LLMChunk:
+    msg = chunk.message
+    content = msg.content
+    if (
+        msg.reasoning_content
+        or not content
+        or ("[THINK]" not in content and "[/THINK]" not in content)
+    ):
+        return chunk
+    ext = ThinkTagExtractor()
+    r, c = ext.feed(content)
+    rt, ct = ext.flush()
+    r += rt
+    c += ct
+    new_msg = msg.model_copy(
+        update={"content": c or None, "reasoning_content": r or None}
+    )
+    return LLMChunk(message=new_msg, usage=chunk.usage)
+
+
+def _apply_think_extractor_streaming(
+    chunk: LLMChunk, extractor: ThinkTagExtractor
+) -> LLMChunk:
+    msg = chunk.message
+    if not msg.content:
+        return chunk
+    r, c = extractor.feed(msg.content)
+    new_reasoning = (msg.reasoning_content or "") + r
+    new_msg = msg.model_copy(
+        update={"content": c or None, "reasoning_content": new_reasoning or None}
+    )
+    return LLMChunk(message=new_msg, usage=chunk.usage)
+
+
+def _completed_to_tool_calls(items: list[CompletedToolCall]) -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=it.id,
+            index=it.index,
+            function=FunctionCall(name=it.name, arguments=it.arguments),
+            type="function",
+        )
+        for it in items
+    ]
+
+
+def _apply_tool_call_text_extractor_streaming(
+    chunk: LLMChunk, extractor: MistralToolCallTextExtractor
+) -> LLMChunk:
+    """Recover tool calls leaked as plain text by buggy server parsers.
+
+    No-op when the chunk already carries structured tool_calls (server is
+    healthy) or when content is empty.
+    """
+    msg = chunk.message
+    if msg.tool_calls:
+        return chunk
+    if not msg.content:
+        return chunk
+    new_content, completed = extractor.feed(msg.content)
+    if new_content == msg.content and not completed:
+        return chunk
+    update: dict[str, Any] = {"content": new_content or None}
+    if completed:
+        update["tool_calls"] = _completed_to_tool_calls(completed)
+    new_msg = msg.model_copy(update=update)
+    return LLMChunk(message=new_msg, usage=chunk.usage)
 
 
 _ADAPTERS: dict[str, APIAdapter] = {
@@ -277,7 +387,10 @@ class GenericBackend:
 
         try:
             res_data, _ = await self._make_request(url, req.body, headers)
-            return adapter.parse_response(res_data, self._provider)
+            chunk = adapter.parse_response(res_data, self._provider)
+            if self._provider.send_thinking_blocks:
+                chunk = _apply_think_extractor_oneshot(chunk)
+            return chunk
 
         except httpx.HTTPStatusError as e:
             raise BackendErrorBuilder.build_http_error(
@@ -343,9 +456,48 @@ class GenericBackend:
         base = req.base_url or self._provider.api_base
         url = f"{base}{req.endpoint}"
 
+        extractor: ThinkTagExtractor | None = (
+            ThinkTagExtractor() if self._provider.send_thinking_blocks else None
+        )
+        tc_extractor: MistralToolCallTextExtractor | None = (
+            MistralToolCallTextExtractor()
+            if self._provider.parse_text_tool_calls
+            else None
+        )
         try:
             async for res_data in self._make_streaming_request(url, req.body, headers):
-                yield adapter.parse_response(res_data, self._provider)
+                chunk = adapter.parse_response(res_data, self._provider)
+                if extractor is not None:
+                    chunk = _apply_think_extractor_streaming(chunk, extractor)
+                if tc_extractor is not None:
+                    chunk = _apply_tool_call_text_extractor_streaming(
+                        chunk, tc_extractor
+                    )
+                yield chunk
+            if extractor is not None:
+                tail_r, tail_c = extractor.flush()
+                if tail_r or tail_c:
+                    yield LLMChunk(
+                        message=LLMMessage(
+                            role=Role.assistant,
+                            content=tail_c or None,
+                            reasoning_content=tail_r or None,
+                        ),
+                        usage=LLMUsage(prompt_tokens=0, completion_tokens=0),
+                    )
+            if tc_extractor is not None:
+                tail_c2, tail_calls = tc_extractor.flush()
+                if tail_c2 or tail_calls:
+                    yield LLMChunk(
+                        message=LLMMessage(
+                            role=Role.assistant,
+                            content=tail_c2 or None,
+                            tool_calls=_completed_to_tool_calls(tail_calls)
+                            if tail_calls
+                            else None,
+                        ),
+                        usage=LLMUsage(prompt_tokens=0, completion_tokens=0),
+                    )
 
         except httpx.HTTPStatusError as e:
             raise BackendErrorBuilder.build_http_error(
