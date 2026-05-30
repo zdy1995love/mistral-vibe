@@ -1,5 +1,49 @@
 # Mistral Vibe
 
+## About this fork
+
+A personal fork of [mistralai/mistral-vibe](https://github.com/mistralai/mistral-vibe), aimed primarily at **self-hosted vLLM deployments** (especially long-context Mistral models) and heavy daily users. Most changes benefit any backend; a handful of streaming-parser patches are vLLM-specific. A common thread runs through them: **keeping long sessions working** — enough headroom to think, and a byte-stable prefix so vLLM's KV cache actually hits.
+
+Unlike the previous fork (which tracked v2.9.x via chained merges), this tree is a **clean-room re-port** of those features onto a fresh upstream **v2.13.0** baseline — each feature landing as an independently tested commit, with no upstream dependency downgraded. See the [Fork Changelog](#fork-changelog) for the per-feature rundown.
+
+- **Hybrid plan mode (modeled after Claude Code)**: layered on Vibe's native plan session. A dispatch-layer write-gate blocks mutating tools while planning (the current plan file is always writable); read-only `bash` (`ls`/`find`/`grep`/`git log`/…) stays allowed; `exit_plan_mode` does *not* continue in the same context — it **forks into a fresh `dev` context** with the plan as a seed prompt, so the long planning turn (reads, exploration, false starts) doesn't bleed into implementation. Plus a `/plan` toggle, a `[PLAN]` indicator, and periodic sparse reminders.
+
+- **Superpowers**: 14 bundled skills (invoked as `/superpowers-<name>`: `brainstorming`, `writing-plans`, `systematic-debugging`, `test-driven-development`, `requesting-code-review`, …) plus a general-purpose subagent, vendored from [obra/superpowers](https://github.com/obra/superpowers) (MIT). They live as a single namespace folder at `~/.agents/skills/superpowers/<name>/`, found via [namespace-folder discovery](#namespace-folders); a version-controlled backup is tracked at [`superpowers/`](superpowers/). **In practice this constrains the workflow remarkably well** — brainstorm → plan → TDD → review tends to actually happen instead of devolving into "let me just patch this." Trade-off: each invoked skill drops its full `SKILL.md` (often several hundred lines) into context, so a full multi-skill flow eats budget on local models with sub-100k context.
+
+- **Output styles**: `/style` to switch; built-in `default` / `concise` / `learner`; user-defined styles via `~/.vibe/prompts/styles/NAME.md`. The default style is byte-equivalent to upstream's prompt assembly, so existing setups carry over unchanged.
+
+- **Per-turn stats**: `/stat` overview + timeline (cache / input / output tokens and cost), with cache-token plumbing through `LLMUsage` — making KV-cache effectiveness visible, the biggest factor in long-session cost on local vLLM.
+
+- **Live agent editing**: `/agents` picker + editor (list / preview / edit / view-full) with hot reload, so agent configs change inside the session without a restart.
+
+- **vLLM streaming compat**: client-side `ThinkTagExtractor` and `MistralToolCallTextExtractor` handle cases where vLLM's `--tool-call-parser mistral` leaks `[TOOL_CALLS]<name>{...}` into `delta.content` or strands a `[/THINK]` close tag without an opener.
+
+- **Thinking ↔ temperature coupling**: upstream's native 5-level `thinking` (`off`/`low`/`medium`/`high`/`max`) is kept; `set_thinking` additionally writes a coupled temperature back to the active model (`off`→`0.3`, `high`→`0.7`) so every entry point inherits it.
+
+- **Preserve reasoning for prefix KV-cache**: past reasoning is replayed as thinking content blocks so the prefix stays byte-stable and prefix-cacheable. Supporting fixes: sanitize truncated `tool_call.arguments` before persisting, and auto-inject an assistant ack after an orphan trailing `tool` message.
+
+- **Micro-compaction**: `MicroCompactMiddleware` clears stale tool-result content (file reads, shell output, grep, web fetches) while preserving the message stream and tool-call structure — avoiding the "lost critical context after `/compact`" problem of summarization. Tunable via `micro_compact_ratio` / `micro_keep_last`.
+
+- **Telemetry hard-disabled** by default.
+
+## Fork Changelog
+
+Status legend: **Kept** = fork-only, still maintained; **Folded upstream** = upstream now ships an equivalent and the fork rebased onto it with minor tweaks. Dates are when each change was first built on the previous fork; all of it was re-landed clean on v2.13.0 on 2026-05-30.
+
+| Date       | Change                                                                                                                                                                                                                 | Status                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 2026-05-30 | **Clean-room re-port onto upstream v2.13.0** — every feature below re-landed on a fresh baseline as independently tested commits (no 2.9→2.13 chained merge). Superpowers relocated to `~/.agents/skills/superpowers/` via namespace-folder discovery; plan mode re-layered on v2.13's native plan session. | —                                   |
+| 2026-05-07 | `/stat` + per-turn timeline (cache/input/output/cost); cache-token plumbing through `LLMUsage`                                                                                                                          | Kept                                |
+| 2026-05-01 | Thinking ↔ temperature coupling: `set_thinking` writes the linked temperature to the active model (`off`→0.3, `high`→0.7); upstream's native 5-level `thinking` kept                                                     | Folded upstream                     |
+| 2026-05-01 | Sanitize truncated `tool_call.arguments` before persisting; coalesce streaming `Markdown.append`; offload session-log `fsync` off the render path                                                                       | Kept                                |
+| 2026-04-29 | Plan mode: `mutates_state` write-gate, read-only bash allowed, `exit_plan_mode` forks to a fresh `dev` context, `/plan` toggle + `[PLAN]` indicator, sparse reminders                                                   | Kept                                |
+| 2026-04-29 | Output styles: `/style`, built-in `default`/`concise`/`learner`, user styles via `~/.vibe/prompts/styles/NAME.md`                                                                                                       | Kept                                |
+| 2026-04-29 | `/agents` picker + editor with hot reload (`reload_from_disk`)                                                                                                                                                          | Kept                                |
+| 2026-04-28 | Micro-compaction: `MicroCompactMiddleware` clears stale tool-result content (`micro_compact_ratio` / `micro_keep_last`)                                                                                                 | Kept                                |
+| 2026-04-28 | `MistralToolCallTextExtractor` (opt-in per provider via `parse_text_tool_calls`)                                                                                                                                        | Kept                                |
+| 2026-04-26 | `ThinkTagExtractor` for vLLM streaming; preserve past reasoning as thinking blocks for a byte-stable prefix                                                                                                             | Kept                                |
+| 2026-04-26 | End-to-end reasoning (`reasoning_effort` config + runtime toggle)                                                                                                                                                       | Folded upstream (v2.13 `thinking`)  |
+
 [![PyPI Version](https://img.shields.io/pypi/v/mistral-vibe)](https://pypi.org/project/mistral-vibe)
 [![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/release/python-3120/)
 [![CI Status](https://github.com/mistralai/mistral-vibe/actions/workflows/ci.yml/badge.svg)](https://github.com/mistralai/mistral-vibe/actions/workflows/ci.yml)
@@ -23,9 +67,6 @@ Mistral Vibe is a command-line coding assistant powered by Mistral's models. It 
 
 > [!WARNING]
 > Mistral Vibe works on Windows, but we officially support and target UNIX environments.
-
-> [!NOTE]
-> This is a **personal fork** — a clean-room port of custom features onto the upstream **v2.13.0** baseline. See [Fork customizations](#fork-customizations-clean-room-v213-port) for what differs from stock Vibe.
 
 ### One-line install (recommended)
 
@@ -90,7 +131,6 @@ pip install mistral-vibe
 - [Editors/IDEs](#editorsides)
 - [Resources](#resources)
 - [Data collection & usage](#data-collection--usage)
-- [Fork customizations (clean-room v2.13 port)](#fork-customizations-clean-room-v213-port)
 - [License](#license)
 
 ## Features
@@ -708,27 +748,6 @@ Mistral Vibe can be used in text editors and IDEs that support [Agent Client Pro
 
 Use of Vibe is subject to our [Privacy Policy](https://legal.mistral.ai/terms/privacy-policy) and may include the collection and processing of data related to your use of the service, such as usage data, to operate, maintain, and improve Vibe. You can disable telemetry in your `config.toml` by setting `enable_telemetry = false`.
 
-
-## Fork customizations (clean-room v2.13 port)
-
-This repository is a personal fork. Rather than chain-merging the previous fork (based on v2.9.x) up to v2.13, its custom features were **re-ported clean** onto a fresh upstream **v2.13.0** baseline — each feature landing as an independently tested commit. Everything below is additive to stock Vibe; no upstream dependency was downgraded.
-
-**Local-model & inference**
-- Cached-prompt-token accounting and two-tier reasoning with a `thinking`↔temperature coupling.
-- vLLM-friendly streaming extractors (think-tag / Mistral tool-call text) and `reasoning_effort` plumbing.
-
-**UX & workflow**
-- Output styles (`/style`) and an interactive `/agents` picker + editor with live reload.
-- Per-turn stats (`/stat` overview + timeline) and a plaintext streaming renderer.
-- Telemetry hard-off and layered (project/user) configuration.
-
-**Context & planning**
-- Microcompaction — drop stale tool results before a full compaction pass.
-- Hybrid **plan mode** layered on Vibe's native plan session: a `mutates_state` write-gate (the current plan file is always writable), fork-to-`dev` on exit, sparse reminders, a `/plan` toggle, and a plan-mode indicator.
-
-**Bundled superpowers skills**
-- 14 [superpowers](https://github.com/obra/superpowers) skills (MIT) vendored as a single namespace folder. At runtime they load from `~/.agents/skills/superpowers/<name>/` (see [Skill Discovery](#skill-discovery)) and are invoked as `/superpowers-<name>` (e.g. `/superpowers-brainstorming`).
-- A version-controlled backup of that folder is tracked at [`superpowers/`](superpowers/) in this repo. It exists purely for backup/review — the *runtime* copy is the one under `~/.agents/skills/`.
 
 ## License
 
