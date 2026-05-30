@@ -42,6 +42,7 @@ from vibe.core.llm.format import (
     ResolvedToolCall,
 )
 from vibe.core.llm.types import BackendLike
+from vibe.core.microcompact import MicroCompactMiddleware
 from vibe.core.middleware import (
     CHAT_AGENT_EXIT,
     CHAT_AGENT_REMINDER,
@@ -911,6 +912,11 @@ class AgentLoop:  # noqa: PLR0904
         if self._max_session_tokens is not None:
             self.middleware_pipeline.add(TokenLimitMiddleware(self._max_session_tokens))
 
+        # MicroCompact runs immediately before AutoCompact: it clears old tool
+        # results and mutates stats.context_tokens DOWN, so AutoCompact then
+        # re-reads the reduced count and may skip a full compaction. Ordering
+        # is load-bearing.
+        self.middleware_pipeline.add(MicroCompactMiddleware())
         self.middleware_pipeline.add(AutoCompactMiddleware())
         if self.config.context_warnings:
             self.middleware_pipeline.add(ContextWarningMiddleware(0.5))
