@@ -1,0 +1,1409 @@
+{
+  "specs": [
+    {
+      "feature": "cached-tokens (cached_prompt_tokens / session_cached_tokens)",
+      "difficulty": "green",
+      "phase": "P1",
+      "fork_files": [
+        {
+          "path": "vibe/core/types.py",
+          "role": "LLMUsage.cached_prompt_tokens field + __add__; AgentStats.session_cached_tokens + last_turn_cached_tokens fields + reset_context_state reset; TurnRecord model + AgentStats.turns list; AgentStats.cleared_tool_results field"
+        },
+        {
+          "path": "vibe/core/llm/backend/anthropic.py",
+          "role": "_build_usage_from_message_response() helper that maps cache_read_input_tokens -> cached_prompt_tokens; called at 3 sites: AnthropicMapper.parse_response (line ~166), AnthropicMapper._handle_message_start (line ~299), AnthropicAdapter._parse_message_start (line ~516)"
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "role": "OpenAIAdapter.parse_response reads prompt_tokens_details.cached_tokens -> LLMUsage.cached_prompt_tokens (line ~207)"
+        },
+        {
+          "path": "vibe/core/llm/backend/openai_responses.py",
+          "role": "_build_usage() module-level helper reads input_tokens_details.cached_tokens -> cached_prompt_tokens; _OpenAIResponsesStreamParser._usage_from_response delegates to it"
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "role": "_update_stats() accumulates usage.cached_prompt_tokens into stats.session_cached_tokens and stats.last_turn_cached_tokens; appends TurnRecord to stats.turns"
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/stat_overview.py",
+          "role": "UI consumer: displays session_cached_tokens and last_turn_cached_tokens with cache-hit percentage"
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/stat_timeline.py",
+          "role": "UI consumer: uses session_cached_tokens for timeline chart"
+        },
+        {
+          "path": "tests/backend/test_cache_tokens.py",
+          "role": "Test file: 7 tests covering all 3 extraction sites (generic/anthropic/openai_responses) including null/missing field edge cases"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/types.py",
+          "anchor": "class LLMUsage(BaseModel) at line 332",
+          "upstream_change": "v2.13 LLMUsage has only prompt_tokens + completion_tokens — no cached_prompt_tokens field. AgentStats (line 47) has no session_cached_tokens, no last_turn_cached_tokens, no TurnRecord, no cleared_tool_results. reset_context_state (line 128) exists but does not reset any cached field."
+        },
+        {
+          "path": "vibe/core/llm/backend/anthropic.py",
+          "anchor": "AnthropicMapper.parse_response (line 132) and _handle_message_start (line 286) and AnthropicAdapter._parse_message_start (line 506)",
+          "upstream_change": "v2.13 has all three token-accumulation sites intact but uses inline LLMUsage(prompt_tokens=total_input_tokens, completion_tokens=...) with NO cached_prompt_tokens. The _build_usage_from_message_response helper from the fork does not exist. cache_read_input_tokens is already summed into prompt_tokens but not surfaced separately."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "OpenAIAdapter.parse_response around line 158-164",
+          "upstream_change": "v2.13 constructs LLMUsage with only prompt_tokens + completion_tokens; the prompt_tokens_details lookup and cached_prompt_tokens population added in the fork are absent."
+        },
+        {
+          "path": "vibe/core/llm/backend/openai_responses.py",
+          "anchor": "_OpenAIResponsesStreamParser._usage_from_response (line 129) and _ResponsesUsageData TypedDict (line 31)",
+          "upstream_change": "v2.13 _ResponsesUsageData has no input_tokens_details key; _usage_from_response returns LLMUsage without cached_prompt_tokens. The _build_usage() module-level helper from the fork does not exist."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "AgentLoop._update_stats (line 1454)",
+          "upstream_change": "v2.13 _update_stats only sets last_turn_prompt_tokens, last_turn_completion_tokens, session_prompt_tokens, session_completion_tokens — no cached accumulation, no TurnRecord append."
+        }
+      ],
+      "upstream_native_replacements": [],
+      "port_steps": [
+        "1. vibe/core/types.py — Add cached_prompt_tokens: int = 0 to LLMUsage and carry through __add__. Add session_cached_tokens: int = 0 and last_turn_cached_tokens: int = 0 to AgentStats. Add reset of last_turn_cached_tokens in reset_context_state(). Add TurnRecord model class (index, prompt_tokens, cached_tokens, completion_tokens, duration, started_at, tools fields). Add turns: list[TurnRecord] = Field(default_factory=list) to AgentStats. Add cleared_tool_results: int = 0 to AgentStats if needed by other features.",
+        "2. vibe/core/llm/backend/anthropic.py — Add _build_usage_from_message_response(data) module-level helper that sets cached_prompt_tokens=data['usage'].get('cache_read_input_tokens', 0). Replace all three inline LLMUsage construction sites (AnthropicMapper.parse_response ~line 166, AnthropicMapper._handle_message_start ~line 299, AnthropicAdapter._parse_message_start ~line 516) with calls to this helper.",
+        "3. vibe/core/llm/backend/generic.py — In OpenAIAdapter.parse_response, add details = usage_data.get('prompt_tokens_details') or {} and pass cached_prompt_tokens=details.get('cached_tokens', 0) to the LLMUsage constructor.",
+        "4. vibe/core/llm/backend/openai_responses.py — Add input_tokens_details: dict[str, Any] to _ResponsesUsageData TypedDict. Add module-level _build_usage(usage) helper that extracts input_tokens_details.cached_tokens. Update _OpenAIResponsesStreamParser._usage_from_response to delegate to _build_usage.",
+        "5. vibe/core/agent_loop.py — In _update_stats, add lines: self.stats.last_turn_cached_tokens = usage.cached_prompt_tokens; self.stats.session_cached_tokens += usage.cached_prompt_tokens; self.stats.turns.append(TurnRecord(...)). Import TurnRecord from vibe.core.types.",
+        "6. vibe/cli/textual_ui/widgets/stat_overview.py and stat_timeline.py — Port the UI display logic for cached tokens (these are display-only consumers; port after the data model is in place)."
+      ],
+      "tests_to_migrate": [
+        "tests/backend/test_cache_tokens.py — all 7 tests must migrate to v2.13 as-is; they test the 3 extraction helpers (_build_usage_from_message_response, OpenAIAdapter.parse_response via prompt_tokens_details, _build_usage for openai_responses). Place at tests/backend/test_cache_tokens.py in v2.13. No upstream tests cover cached_prompt_tokens so none can be dropped."
+      ],
+      "risks": [
+        "Low risk overall — the change is purely additive (new optional fields, new helper functions, accumulation in _update_stats). No existing v2.13 call signatures change.",
+        "The _build_usage_from_message_response helper in the fork also handles the streaming message_start path (AnthropicAdapter._parse_message_start). This site uses a nested message dict, not a raw usage dict — verify the helper's data.get('usage', {}) path works correctly when called with the inner message object vs the outer response dict at all three call sites.",
+        "AgentStats.turns (TurnRecord list) grows unbounded per session — if v2.13 sessions are long-running this could become a memory concern, but it is the same behavior as the fork.",
+        "TurnRecord and cleared_tool_results in AgentStats are bundled together in the fork diff. If cleared_tool_results is needed only by a different feature (e.g., the /stat overlay), confirm whether to include it in this port or defer to P4.",
+        "v2.13 test_acp/test_usage_update.py checks response.usage.cached_read_tokens is None — this test constructs LLMUsage without cached_prompt_tokens. After the port, FakeBackend must also pass cached_prompt_tokens=0 or the None assertion will still hold (not a conflict, just verify)."
+      ],
+      "estimated_loc": 55,
+      "confidence": "high",
+      "_key": "cached-tokens"
+    },
+    {
+      "feature": "reasoning-two-tier",
+      "difficulty": "yellow",
+      "phase": "P1: Local-model essentials",
+      "fork_files": [
+        {
+          "path": "vibe/core/config/_settings.py",
+          "role": "ThinkingLevel narrowed from 5-level Literal to binary Literal['off','high']; _THINKING_TEMPERATURE dict added ({high:0.7, off:0.3}); set_thinking() extended to co-update ModelConfig.temperature in lockstep; ProviderConfig gains send_thinking_blocks:bool and parse_text_tool_calls:bool; VibeConfig.enable_telemetry defaulted to False"
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "role": "OpenAIAdapter._reasoning_to_api() expanded: strips reasoning_content from non-assistant roles, and optionally encodes it as a structured {type:thinking, thinking:...} content block when send_thinking_blocks=True; OpenAIAdapter.build_payload() and prepare_request() gain reasoning_effort kwarg and pass it to the payload; GenericBackend.complete/stream_complete pass reasoning_effort=model.thinking when thinking!='off'; ThinkTagExtractor and MistralToolCallTextExtractor wired into streaming/oneshot paths when send_thinking_blocks or parse_text_tool_calls are set on the provider"
+        },
+        {
+          "path": "vibe/core/llm/backend/reasoning_adapter.py",
+          "role": "ReasoningAdapter._build_payload() and prepare_request() gain a reasoning_effort kwarg; when reasoning_effort is not None it takes precedence over thinking for the payload key"
+        },
+        {
+          "path": "vibe/core/llm/backend/think_tag_extractor.py",
+          "role": "New file (99 LOC): stateful [THINK]/[/THINK] tag splitter for vLLM backends that leak reasoning into the content field instead of a separate reasoning field; handles partial-tag buffering and orphan close tags"
+        },
+        {
+          "path": "vibe/core/llm/backend/mistral_text_tool_call_extractor.py",
+          "role": "New file (234 LOC): streaming parser that recovers tool calls leaked as plain markdown/JSON text by buggy vLLM parsers; extracts CompletedToolCall objects from the content stream"
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/thinking_picker.py",
+          "role": "No source changes; the widget itself is unchanged — only the ThinkingLevel Literal it uses changed scope"
+        },
+        {
+          "path": "tests/cli/test_ui_config_and_model_picker.py",
+          "role": "Thinking picker tests updated for two-level scale: test_thinking_picker_select_level renamed to test_thinking_picker_select_high, navigation adjusted from 3 presses to 1; removed test_thinking_picker_select_high variant that was a separate test for the high level at position 4"
+        },
+        {
+          "path": "tests/core/test_config_resolution.py",
+          "role": "TestSetThinking: set_thinking('max') → set_thinking('high'); _ModelConfigOverrides type annotation narrowed to Literal['off','high']"
+        },
+        {
+          "path": "tests/backend/test_generic_think_extractor.py",
+          "role": "New test file (53 LOC): covers _apply_think_extractor_oneshot for paired tags, passthrough, and orphan-close stripping"
+        },
+        {
+          "path": "tests/llm/test_think_tag_extractor.py",
+          "role": "New test file: unit tests for ThinkTagExtractor streaming cases (paired tags, split-chunk buffering, orphan close tags)"
+        },
+        {
+          "path": "tests/backend/test_mistral_text_tool_call_extractor.py",
+          "role": "New test file: unit tests for MistralToolCallTextExtractor streaming and flush paths"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/config/_settings.py",
+          "anchor": "ThinkingLevel = Literal['off', 'low', 'medium', 'high', 'max'] (line 362) and set_thinking() (line 952)",
+          "upstream_change": "v2.13 keeps the full 5-level ThinkingLevel unchanged. set_thinking() does NOT co-update temperature. _THINKING_TEMPERATURE dict and temperature co-update logic do not exist in v2.13. ProviderConfig does not have send_thinking_blocks or parse_text_tool_calls fields."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "OpenAIAdapter._reasoning_to_api() (line 68-73), OpenAIAdapter.prepare_request() (line 82-127), GenericBackend.complete/stream_complete (lines 260-340)",
+          "upstream_change": "v2.13 _reasoning_to_api() only renames the field name (field_name != reasoning_content case); it does NOT strip non-assistant roles or encode thinking blocks. prepare_request() has no reasoning_effort parameter. ThinkTagExtractor and MistralToolCallTextExtractor are absent from v2.13's generic.py entirely."
+        },
+        {
+          "path": "vibe/core/llm/backend/reasoning_adapter.py",
+          "anchor": "ReasoningAdapter._build_payload() (line 74) and prepare_request() (line 109)",
+          "upstream_change": "v2.13 ReasoningAdapter passes thinking directly as reasoning_effort (if thinking != 'off'). The fork adds an explicit reasoning_effort kwarg as override. The v2.13 version has no reasoning_effort override path; the fork's addition provides a way for GenericBackend to pass a pre-computed effort string independently of the thinking string."
+        },
+        {
+          "path": "vibe/core/llm/backend/mistral.py",
+          "anchor": "_THINKING_TO_REASONING_EFFORT dict (line 174) and temperature=1.0 when reasoning_effort set (lines 281-283, 359-361)",
+          "upstream_change": "v2.13 MistralBackend natively forces temperature=1.0 when reasoning_effort is active (for the Mistral SDK path). This is a different temperature-coupling mechanism than the fork's per-level temperature dict (0.7/0.3) applied to the OpenAI/generic path. The fork's mechanism targets the generic/OpenAI backend; v2.13 only does it for MistralBackend."
+        }
+      ],
+      "upstream_native_replacements": [
+        "The thinking history re-injection mechanism (storing reasoning_content in LLMMessage and including it in history) is fully native in v2.13: LLMMessage.reasoning_content exists in vibe/core/types.py, ReasoningAdapter._convert_assistant_message() already re-serializes it as structured thinking blocks for the API, and GenericBackend passes it through. There is nothing custom in the fork about history storage or re-injection — those were inherited from v2.9.6 upstream already. The fork did NOT add history re-injection; it added vLLM-specific parsers (ThinkTagExtractor) for when the server fails to extract thinking blocks itself.",
+        "The /thinking command and ThinkingPickerApp widget are fully native in both v2.9.6 and v2.13 — the fork did not add a /reasoning command; it only modified the two-tier ThinkingLevel and the temperature coupling."
+      ],
+      "port_steps": [
+        "Step 1 — vibe/core/config/_settings.py: Narrow ThinkingLevel to Literal['off','high'] by overriding the upstream definition. Add _THINKING_TEMPERATURE = {'high': 0.7, 'off': 0.3}. Extend set_thinking() to also update ModelConfig.temperature in the in-memory copy and the TOML write (both the found-entry branch and the materialize-all-models branch). Add send_thinking_blocks:bool=False and parse_text_tool_calls:bool=False to ProviderConfig. Set enable_telemetry default to False.",
+        "Step 2 — vibe/core/llm/backend/think_tag_extractor.py: Copy the file verbatim from the fork (99 LOC, no v2.13 equivalent). The file lives in the same path in v2.13's backend directory.",
+        "Step 3 — vibe/core/llm/backend/mistral_text_tool_call_extractor.py: Copy the file verbatim from the fork (234 LOC, no v2.13 equivalent).",
+        "Step 4 — vibe/core/llm/backend/generic.py: (a) Add imports for ThinkTagExtractor, MistralToolCallTextExtractor, FunctionCall, ToolCall. (b) Expand OpenAIAdapter._reasoning_to_api() to strip reasoning_content from non-assistant roles and optionally encode it as a thinking content block when send_thinking_blocks=True. (c) Add reasoning_effort: str|None param to OpenAIAdapter.build_payload() and prepare_request(); inject into payload when set; add del thinking guard. (d) Add the four helper functions: _apply_think_extractor_oneshot, _apply_think_extractor_streaming, _completed_to_tool_calls, _apply_tool_call_text_extractor_streaming. (e) In GenericBackend.complete() and stream_complete(): pass reasoning_effort=model.thinking if model.thinking!='off' else None; wrap adapter.parse_response() calls with the ThinkTag and ToolCallText extractors when provider flags are set.",
+        "Step 5 — vibe/core/llm/backend/reasoning_adapter.py: Add reasoning_effort:str|None=None param to _build_payload() and prepare_request(). In _build_payload(): check reasoning_effort first (takes precedence), fall back to elif thinking!='off' branch for the payload key.",
+        "Step 6 — vibe/cli/textual_ui/widgets/thinking_picker.py: No code changes needed. The widget consumes THINKING_LEVELS from config — once Step 1 narrows the Literal, the picker will only show ['off','high'] automatically.",
+        "Step 7 — tests/cli/test_ui_config_and_model_picker.py: Apply the fork's test adjustments: rename test_thinking_picker_select_level to test_thinking_picker_select_high, remove the original test_thinking_picker_select_high multi-step test (redundant after rename), update navigation counts and expected values ('low'/'medium' → 'high') in config_to_thinking_picker test.",
+        "Step 8 — tests/core/test_config_resolution.py: Update _ModelConfigOverrides TypedDict annotation to Literal['off','high']. Update test_persists_thinking_for_correct_model: set_thinking('max') → set_thinking('high'), result assertion from 'max' → 'high'. Update TestMigrateMistralVibeCliLatestDefaults assertions from 'low' → 'high'.",
+        "Step 9 — tests/backend/test_generic_think_extractor.py: Copy from fork verbatim (53 LOC new file).",
+        "Step 10 — tests/llm/test_think_tag_extractor.py: Copy from fork verbatim.",
+        "Step 11 — tests/backend/test_mistral_text_tool_call_extractor.py: Copy from fork verbatim.",
+        "Step 12 — Verify test_backend.py reasoning_effort parametrize does not conflict: v2.13 test_backend.py parametrizes ('off','low','medium','high') with effort mapping. The fork's two-tier only affects the ThinkingLevel Literal and generic/OpenAI path — MistralBackend's effort mapping stays unchanged. No adjustment needed for test_backend.py."
+      ],
+      "tests_to_migrate": [
+        "tests/cli/test_ui_config_and_model_picker.py — adjust picker navigation tests for two-level scale (fork already did this; port the adjustments)",
+        "tests/core/test_config_resolution.py — update TestSetThinking and TestMigrateMistralVibeCliLatestDefaults for narrowed ThinkingLevel and temperature co-update",
+        "tests/backend/test_generic_think_extractor.py — new file, copy verbatim from fork",
+        "tests/llm/test_think_tag_extractor.py — new file, copy verbatim from fork",
+        "tests/backend/test_mistral_text_tool_call_extractor.py — new file, copy verbatim from fork",
+        "tests/backend/test_backend.py — v2.13 TestReasoningEffort parametrize covers ('off','low','medium','high'): the fork's two-tier ThinkingLevel makes 'low' and 'medium' invalid; either drop those parametrize entries or add migration guards. NOTE: this file lives only in v2.13 upstream, no fork diff — requires new test edits."
+      ],
+      "risks": [
+        "ThinkingLevel narrowing breaks v2.13 upstream tests: v2.13's tests/cli/test_ui_config_and_model_picker.py has test_thinking_picker_shows_all_levels asserting picker._thinking_levels == THINKING_LEVELS (expects ['off','low','medium','high','max']). After narrowing to ['off','high'] this test fails. Must update the v2.13 test.",
+        "test_backend.py TestReasoningEffort parametrize uses ('low','medium','high') thinking values which become invalid ThinkingLevel literals after narrowing. Either update or add a compatibility shim that accepts deprecated values and logs a warning.",
+        "Temperature coupling conflict: v2.13 MistralBackend already forces temperature=1.0 when reasoning_effort is active (SDK path). The fork's _THINKING_TEMPERATURE applies 0.7 to the generic/OpenAI backend only. If a user sets thinking='high' via the picker on the Mistral SDK backend, set_thinking() will write temperature=0.7 to TOML, but the SDK backend will override it to 1.0 at call time — the persisted temperature is misleading. Decide whether to skip temperature co-update for MistralBackend providers, or document the override.",
+        "v2.13 set_thinking() does NOT update temperature — adding temperature co-update changes the TOML schema. Users with existing configs that have temperature set independently from thinking level will have their temperature overwritten when they toggle thinking. This is a behavioral regression relative to v2.13 defaults.",
+        "send_thinking_blocks and parse_text_tool_calls are not in v2.13's ProviderConfig — adding them requires no migration, but any provider config TOML that defines these fields will fail Pydantic validation unless the fields are added first (Step 1 must land before any config reload).",
+        "The fork's ThinkTagExtractor is a client-side workaround for vLLM's failure to extract [THINK] blocks. v2.13 has no equivalent. This is safe to port but introduces a path that is completely untested on the Mistral API — ensure send_thinking_blocks=False remains the default so the extractor is opt-in."
+      ],
+      "estimated_loc": 420,
+      "confidence": "high",
+      "_key": "reasoning-two-tier"
+    },
+    {
+      "feature": "vllm-extractors: vLLM think-tag extraction + Mistral tool-call text fallback",
+      "difficulty": "yellow",
+      "phase": "P1",
+      "fork_files": [
+        {
+          "path": "vibe/core/llm/backend/think_tag_extractor.py",
+          "role": "New file: stateful [THINK]..[/THINK] text-tag splitter for streamed vLLM output that fails to extract reasoning into a structured field"
+        },
+        {
+          "path": "vibe/core/llm/backend/mistral_text_tool_call_extractor.py",
+          "role": "New file: stateful [TOOL_CALLS]<name>{<json>} text recovery for buggy vLLM HF-tokenizer tool-call parser"
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "role": "Wires both extractors into GenericBackend.complete() (one-shot) and complete_streaming() (streaming); adds reasoning_effort to OpenAIAdapter.build_payload; extends _reasoning_to_api with send_thinking_blocks block serialization; adds cached_prompt_tokens to parse_response"
+        },
+        {
+          "path": "vibe/core/llm/backend/anthropic.py",
+          "role": "Extracts _build_usage_from_message_response helper; adds cached_prompt_tokens to all three LLMUsage construction sites"
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "role": "Adds send_thinking_blocks: bool = False and parse_text_tool_calls: bool = False to ProviderConfig"
+        },
+        {
+          "path": "vibe/core/types.py",
+          "role": "Adds cached_prompt_tokens: int = 0 field to LLMUsage and propagates it in __add__"
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "role": "Adds _sanitize_tool_call_arguments, _generate_synthetic_tool_call_id, _match_trailing_inline_tool_call, _promote_inline_tool_calls; calls both sanitize+promote after non-streaming and streaming completions before self.messages.append"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "GenericBackend.complete() line 278: return adapter.parse_response(res_data, self._provider)",
+          "upstream_change": "v2.13 stripped ~186 lines of feature additions; the one-shot parse result is returned bare with no post-parse hook. Inject _apply_think_extractor_oneshot(chunk) here guarded by provider.send_thinking_blocks."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "GenericBackend.complete_streaming() line 346: yield adapter.parse_response(res_data, self._provider)",
+          "upstream_change": "v2.13 yields each chunk bare. Inject _apply_think_extractor_streaming and _apply_tool_call_text_extractor_streaming per-chunk, plus extractor.flush() tail yields after the loop."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "OpenAIAdapter.build_payload() line 34-60",
+          "upstream_change": "v2.13 build_payload has no reasoning_effort parameter. Fork adds it as optional kwarg and conditionally includes payload['reasoning_effort']. Must add back."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "OpenAIAdapter._reasoning_to_api() line 68-73",
+          "upstream_change": "v2.13 has the naive 1-line version (rename field if not 'reasoning_content'). Fork extended it with role guard and send_thinking_blocks block serialization. Must add send_thinking_blocks path; the role guard is also needed."
+        },
+        {
+          "path": "vibe/core/llm/backend/generic.py",
+          "anchor": "OpenAIAdapter.parse_response() line 158-163: LLMUsage construction",
+          "upstream_change": "v2.13 does not populate cached_prompt_tokens. Fork reads prompt_tokens_details.cached_tokens. Needs cached_prompt_tokens field on LLMUsage first."
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "anchor": "class ProviderConfig line 171, after reasoning_field_name field (line 179)",
+          "upstream_change": "v2.13 ProviderConfig has no send_thinking_blocks or parse_text_tool_calls. Both fields must be added here as bool = False."
+        },
+        {
+          "path": "vibe/core/types.py",
+          "anchor": "class LLMUsage line 332",
+          "upstream_change": "v2.13 LLMUsage has only prompt_tokens and completion_tokens. Fork adds cached_prompt_tokens: int = 0 and propagates it in __add__."
+        },
+        {
+          "path": "vibe/core/llm/backend/anthropic.py",
+          "anchor": "LLMUsage construction in parse_response() line 166, _parse_message_start_event() line 297, _parse_message_start() line 514",
+          "upstream_change": "v2.13 anthropic.py builds LLMUsage without cached_prompt_tokens at all three sites. Fork extracted a _build_usage_from_message_response() helper that adds cached_prompt_tokens=cache_read_input_tokens."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_chat_nonstreaming() line 1368: self.messages.append(processed_message)",
+          "upstream_change": "v2.13 appends raw processed_message. Fork inserts _sanitize_tool_call_arguments + _promote_inline_tool_calls between format_handler processing and the append."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_chat_streaming() line 1440: self.messages.append(chunk_agg.message)",
+          "upstream_change": "v2.13 appends raw chunk_agg.message after streaming. Fork runs _sanitize_tool_call_arguments(chunk_agg.message) then _promote_inline_tool_calls on the result before appending."
+        }
+      ],
+      "upstream_native_replacements": [
+        "ReasoningAdapter (api_style='reasoning') natively handles structured thinking-block round-trips to vLLM — providers that return structured {type:'thinking'} blocks can use api_style='reasoning' instead of api_style='openai' + send_thinking_blocks=True. However, ThinkTagExtractor is still required for the [THINK] TEXT-tag fallback (vLLM bug when history contains prior [THINK] blocks); it is not redundant.",
+        "MistralBackend (api_style via Backend.MISTRAL) uses the mistralai SDK which handles [THINK]/ThinkChunk natively — no extractors needed for cloud Mistral providers using Backend.MISTRAL.",
+        "v2.13 mistral.py MistralBackend already maps model.thinking -> reasoning_effort natively via _THINKING_TO_REASONING_EFFORT dict (lines 174-179, 281-299, 359-376). The fork's OpenAIAdapter.prepare_request reasoning_effort mapping is only needed for GENERIC vLLM providers."
+      ],
+      "port_steps": [
+        "1. vibe/core/types.py: Add cached_prompt_tokens: int = 0 to LLMUsage and propagate in __add__. This unblocks all downstream callers.",
+        "2. vibe/core/config/_settings.py: Add send_thinking_blocks: bool = False and parse_text_tool_calls: bool = False to ProviderConfig (after reasoning_field_name at line 179).",
+        "3. Copy vibe/core/llm/backend/think_tag_extractor.py verbatim from fork to v2.13 — no v2.13 conflicts, pure new file.",
+        "4. Copy vibe/core/llm/backend/mistral_text_tool_call_extractor.py verbatim from fork to v2.13 — no v2.13 conflicts, pure new file.",
+        "5. vibe/core/llm/backend/anthropic.py: Extract _build_usage_from_message_response helper at module level; update all three LLMUsage construction sites (parse_response, _parse_message_start_event, _parse_message_start) to use it with cached_prompt_tokens=cache_read_input_tokens. Also add reasoning_effort: str | None = None param + del reasoning_effort stub to AnthropicAdapter.prepare_request to match the interface the fork adds.",
+        "6. vibe/core/llm/backend/generic.py: (a) Add imports for ThinkTagExtractor, MistralToolCallTextExtractor, CompletedToolCall, FunctionCall, ToolCall. (b) Extend OpenAIAdapter.build_payload signature with reasoning_effort: str | None = None and conditionally set payload['reasoning_effort']. (c) Extend OpenAIAdapter._reasoning_to_api with role guard and send_thinking_blocks block-serialization path. (d) Update OpenAIAdapter.prepare_request to accept reasoning_effort kwarg and pass it to build_payload; also add del thinking comment to document the override semantics. (e) Add cached_prompt_tokens to parse_response's LLMUsage. (f) Add module-level helpers: _apply_think_extractor_oneshot, _apply_think_extractor_streaming, _completed_to_tool_calls, _apply_tool_call_text_extractor_streaming. (g) In GenericBackend.complete(): instantiate extractor on send_thinking_blocks, apply _apply_think_extractor_oneshot to the chunk, return result. (h) In GenericBackend.complete_streaming(): instantiate both extractors from provider flags, apply per-chunk inside the loop, flush both with tail yield after loop. (i) Pass reasoning_effort=model.thinking if model.thinking != 'off' else None to adapter.prepare_request in both complete() and complete_streaming().",
+        "7. vibe/core/agent_loop.py: (a) Add json import (already present in v2.13). (b) Add _sanitize_tool_call_arguments, _generate_synthetic_tool_call_id, _match_trailing_inline_tool_call, _promote_inline_tool_calls functions (copy verbatim from fork lines 200-371). (c) In _chat_nonstreaming(): insert _sanitize_tool_call_arguments + _promote_inline_tool_calls between format_handler.process_api_response_message and self.messages.append at v2.13 line 1368. (d) In _chat_streaming(): insert _sanitize_tool_call_arguments(chunk_agg.message) + _promote_inline_tool_calls before self.messages.append at v2.13 line 1440.",
+        "8. Port test files: copy tests/llm/test_think_tag_extractor.py, tests/backend/test_generic_think_extractor.py, tests/backend/test_mistral_text_tool_call_extractor.py, tests/test_promote_inline_tool_calls.py, tests/test_tool_call_sanitize.py verbatim. Update any import paths if directory layout differs.",
+        "9. Run pytest on ported test files to verify no import or API drift."
+      ],
+      "tests_to_migrate": [
+        "tests/llm/test_think_tag_extractor.py — unit tests for ThinkTagExtractor.feed/flush, orphan-close handling, cross-chunk buffering. Migrate verbatim.",
+        "tests/backend/test_generic_think_extractor.py — unit tests for _apply_think_extractor_oneshot (one-shot path). Migrate verbatim; update import if needed since it imports from vibe.core.llm.backend.generic.",
+        "tests/backend/test_mistral_text_tool_call_extractor.py — unit tests for MistralToolCallTextExtractor, 205 LOC. Migrate verbatim.",
+        "tests/test_promote_inline_tool_calls.py — unit tests for _promote_inline_tool_calls in agent_loop, 187 LOC. Migrate verbatim.",
+        "tests/test_tool_call_sanitize.py — unit tests for _sanitize_tool_call_arguments in agent_loop, 113 LOC. Migrate verbatim.",
+        "tests/test_agent_backend.py and tests/test_agent_tool_call.py — neither file tests our extractors directly; no migration needed for this feature. v2.13 already has its own versions of these files."
+      ],
+      "risks": [
+        "LLMUsage.cached_prompt_tokens is absent in v2.13 but is used in fork's agent_loop._update_stats and LLMUsage.__add__. All callers that do usage += chunk.usage (including the streaming aggregator) will fail to compile until types.py is patched first. Step ordering is critical: types.py must be done first.",
+        "v2.13 OpenAIAdapter.prepare_request does NOT accept reasoning_effort as a kwarg; adding it to build_payload changes the public method signature of a ClassVar adapter. The _ADAPTERS dict holds singletons so the change affects all callers; verify no test monkey-patches build_payload.",
+        "v2.13 _reasoning_to_api is narrower (no role guard, no send_thinking_blocks); patching it changes message serialization for ALL providers using OpenAIAdapter. The role guard (drop reasoning_content from non-assistant messages) is a correctness fix and should be safe, but must be tested against existing openai/reasoning adapter test suites (tests/backend/test_reasoning_adapter.py, test_anthropic_adapter.py).",
+        "ThinkTagExtractor is gated on provider.send_thinking_blocks which does not exist in v2.13's ProviderConfig until step 2. If someone runs partial migrations (types done, config not), there will be AttributeError at runtime on self._provider.send_thinking_blocks.",
+        "parse_text_tool_calls uses getattr(self._provider, 'parse_text_tool_calls', False) in the fork as a defensive fallback — this pattern should be preserved in v2.13 until the ProviderConfig field is confirmed present, to avoid AttributeError on old config files loaded at runtime.",
+        "_promote_inline_tool_calls and _sanitize_tool_call_arguments are inserted before self.messages.append in v2.13 agent_loop. v2.13 has significantly more code in _chat_streaming (correlation_id handling, chunk_agg logic) — the exact injection point must be verified against the actual line numbers in v2.13 (line 1368 non-streaming, line 1440 streaming) not the fork's line numbers.",
+        "The fork narrows ThinkingLevel to Literal['off', 'high'] while v2.13 retains all 5 levels. Do NOT narrow v2.13's ThinkingLevel. The reasoning_effort mapping in GenericBackend.complete/complete_streaming should use a mapping dict similar to MistralBackend's _THINKING_TO_REASONING_EFFORT rather than the fork's simple ternary (model.thinking if model.thinking != 'off' else None) to correctly handle 'low'/'medium'/'max' values."
+      ],
+      "estimated_loc": 625,
+      "confidence": "high",
+      "_key": "vllm-extractors"
+    },
+    {
+      "feature": "telemetry-off: TelemetryClient._is_enabled() hard-returns False + GrowthBook experiment layer off",
+      "difficulty": "green",
+      "phase": "P2",
+      "fork_files": [
+        {
+          "path": "vibe/core/telemetry/send.py",
+          "role": "Single source change: TelemetryClient._is_enabled() body replaced with unconditional `return False`. The docstring explains that enable_telemetry config is intentionally ignored at runtime. All send_* methods early-return at send_telemetry_event, no httpx client is ever instantiated."
+        },
+        {
+          "path": "tests/core/test_telemetry_send.py",
+          "role": "Upstream 869-line payload-shape suite replaced with a 75-line TestTelemetryHardDisabled suite verifying: _is_enabled() is False regardless of config, is_active() is always False, send_telemetry_event never instantiates httpx.AsyncClient, all send_* helpers are safe no-ops, aclose is idempotent."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/telemetry/send.py",
+          "anchor": "TelemetryClient._is_enabled() — lines 88-92",
+          "upstream_change": "Signature and body are identical to v2.9.6: reads config.enable_telemetry with try/except, returns False on exception. No structural refactor. The fork simply replaces the body with `return False`. v2.13 added an experiments_getter constructor param and build_client_event_metadata() method, but _is_enabled is unchanged."
+        },
+        {
+          "path": "vibe/core/experiments/session.py",
+          "anchor": "initialize_experiments() / hydrate_experiments_from_session() — lines 26 and 48",
+          "upstream_change": "New module added in v2.10+; did not exist in v2.9.6. Both functions gate on `config.enable_telemetry and config.experiments.enable`. Setting enable_telemetry=False (our existing patch) therefore also hard-disables all GrowthBook remote evaluation and session hydration. No separate patch needed for the experiment layer."
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "anchor": "ExperimentsConfig.enable — line 141; VibeConfig.enable_telemetry — line 513",
+          "upstream_change": "ExperimentsConfig is a new BaseSettings class added post-v2.9.6 with enable=True default. VibeConfig.enable_telemetry still defaults to True. VibeConfig carries env_prefix='VIBE_', so VIBE_ENABLE_TELEMETRY=false would disable at runtime without code changes, but the fork's `return False` is stronger."
+        },
+        {
+          "path": "vibe/core/tracing.py",
+          "anchor": "setup_tracing() — line 24",
+          "upstream_change": "Already existed in v2.9.6 with identical gate: `if not config.enable_telemetry or not config.enable_otel: return`. Since both enable_telemetry defaults to True upstream and enable_otel defaults to False, the fork's _is_enabled()=False patch also silences otel tracing when setup_tracing() is called (enable_telemetry remains True in config unless overridden, but _is_enabled on TelemetryClient is the HTTP-send gate; setup_tracing reads config directly). Note: tracing.py reads config.enable_telemetry directly — not through TelemetryClient._is_enabled — so the fork patch does NOT disable otel tracing."
+        },
+        {
+          "path": "tests/core/test_telemetry_send.py",
+          "anchor": "Module top-level — 859 lines in v2.13",
+          "upstream_change": "v2.13 restored and expanded the upstream payload-shape test suite (859 lines vs the fork's 75-line hard-disable suite). The fork's stripped file directly conflicts with this."
+        }
+      ],
+      "upstream_native_replacements": [
+        "No custom GrowthBook disable code needed: vibe/core/experiments/session.py already gates initialize_experiments() and hydrate_experiments_from_session() on `config.enable_telemetry and config.experiments.enable`. Making _is_enabled() return False already short-circuits the telemetry send path; separately setting experiments.enable=False in config.toml or VIBE_EXPERIMENTS_ENABLE=false disables the GrowthBook eval call without any code patch.",
+        "v2.13 ExperimentsConfig.enable field (line 141 in _settings.py) plus the double-gate in session.py is the native mechanism — no custom experiments-disable code is needed in the port."
+      ],
+      "port_steps": [
+        "1. vibe/core/telemetry/send.py — In TelemetryClient._is_enabled() (lines 88-92), replace the try/except body with `return False` and update the docstring to match the fork's hard-disable explanation. This is the exact same one-function change as in the fork.",
+        "2. vibe/core/config/_settings.py (or config.toml template) — Add `experiments = { enable = false }` as a project-level default, OR set `enable_telemetry = false` (which already short-circuits both telemetry sends AND experiment evaluation). Both approaches work; adding both provides defense-in-depth with no code change needed.",
+        "3. tests/core/test_telemetry_send.py — REPLACE the 859-line upstream payload-shape suite with the fork's 75-line TestTelemetryHardDisabled class. The upstream suite tests the opposite invariant (enabled sends), which is now permanently broken by step 1. Keeping the upstream suite would cause all payload-shape tests to fail.",
+        "4. tests/core/experiments/ — Do NOT port any of these test files; they test the live experiment layer behavior (remote eval, manager, session hydrate). With enable_telemetry=False these code paths are never reached. The existing tests can remain in v2.13's tree — they test the module in isolation via mock configs with enable_telemetry=True.",
+        "5. Verify: run `pytest tests/core/test_telemetry_send.py` to confirm the 7 hard-disable tests pass, and `pytest tests/core/experiments/` to confirm upstream experiment tests still pass (they mock the config).",
+        "6. Optional belt-and-suspenders: add `enable_telemetry = false` to the shipped config.toml so that even if _is_enabled() is ever reverted, runtime config prevents network calls."
+      ],
+      "tests_to_migrate": [
+        "tests/core/test_telemetry_send.py — Replace with the fork's TestTelemetryHardDisabled class (75 lines). The upstream 859-line payload-shape suite tests a code path that is permanently dead after the _is_enabled patch."
+      ],
+      "risks": [
+        "tracing.py otel path reads config.enable_telemetry directly (not through TelemetryClient._is_enabled). If a user sets enable_telemetry=true in their config.toml but the fork only patches _is_enabled, otel spans could still be initialized and exported. The fork's patch alone does NOT disable otel. Mitigation: also hard-gate setup_tracing() in tracing.py with `return` unconditionally, or ensure config.toml ships with enable_telemetry=false.",
+        "ExperimentsConfig has no env_prefix of its own (SettingsConfigDict(extra='ignore') only), so VIBE_ prefix from VibeConfig does not flow to ExperimentsConfig automatically. The nested experiments.enable field must be set via config.toml `[experiments] enable = false` not via VIBE_EXPERIMENTS_ENABLE. Verify pydantic-settings nested model behavior before relying on env vars.",
+        "v2.13 test_telemetry_send.py (859 lines) is a full regression suite for the live telemetry path. Replacing it loses coverage of payload shape, retry logic, aclose behavior, etc. This is intentional for the fork but means any future re-enablement of telemetry has no test baseline.",
+        "tests/core/experiments/test_telemetry_integration.py constructs TelemetryClient with enable_telemetry=True and calls build_client_event_metadata(). After the _is_enabled patch, _is_enabled() always returns False, but build_client_event_metadata() is called independently of _is_enabled(). Those tests should still pass, but verify they do not assert on send_telemetry_event side effects."
+      ],
+      "estimated_loc": 15,
+      "confidence": "high",
+      "_key": "telemetry-off"
+    },
+    {
+      "feature": "output styles (StyleManager + /style command)",
+      "difficulty": "green",
+      "phase": "P3",
+      "fork_files": [
+        {
+          "path": "vibe/core/output_styles/__init__.py",
+          "role": "public re-export of StyleInfo, StyleManager, StyleNotFoundError"
+        },
+        {
+          "path": "vibe/core/output_styles/manager.py",
+          "role": "StyleManager class: discovers builtin + user .md style files, loads them; StyleInfo dataclass; StyleNotFoundError"
+        },
+        {
+          "path": "vibe/core/prompts/styles/default.md",
+          "role": "builtin style: comment-only blank, preserves byte-equivalence with pre-styles baseline"
+        },
+        {
+          "path": "vibe/core/prompts/styles/concise.md",
+          "role": "builtin style: brief/dense response instructions"
+        },
+        {
+          "path": "vibe/core/prompts/styles/learner.md",
+          "role": "builtin style: explain-why instructions for learners"
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "role": "adds output_style: str = 'default' field to VibeConfig"
+        },
+        {
+          "path": "vibe/core/system_prompt.py",
+          "role": "adds _resolve_output_style_section() and prepends it to sections[] in get_universal_system_prompt()"
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "adds _set_output_style() handler method that lists or switches styles"
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "role": "FORK ONLY — NOT in v2.13: must add 'style' Command entry pointing to handler '_set_output_style'"
+        },
+        {
+          "path": "tests/core/output_styles/__init__.py",
+          "role": "empty package marker for test directory"
+        },
+        {
+          "path": "tests/core/output_styles/test_manager.py",
+          "role": "tests StyleManager listing, load, user-override, sort/dedup, builtin .md files existence"
+        },
+        {
+          "path": "tests/cli/textual_ui/test_style_command.py",
+          "role": "async tests for _set_output_style() via build_test_vibe_app/config/agent_loop; covers listing, active marking, user styles, switch, unknown error, plan-mode non-interference"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/config/_settings.py",
+          "anchor": "class VibeConfig(BaseSettings) — field block ending at auto_compact_threshold: int = 200_000 (line 526)",
+          "upstream_change": "v2.13 VibeConfig is still a flat pydantic-settings BaseSettings class (no ConfigSchema/ConfigFragment refactor for top-level fields). The auto_compact_threshold field is the last plain scalar before the vibe_code_enabled block. output_style: str = 'default' inserts cleanly after it. VibeConfig.save_updates() still exists at line 999."
+        },
+        {
+          "path": "vibe/core/system_prompt.py",
+          "anchor": "get_universal_system_prompt() — line 308; first statement: sections = [_interpolate_prompt(_resolve_system_prompt(config, experiment_manager))] (line 319)",
+          "upstream_change": "v2.13 added an experiment_manager: ExperimentManager | None = None parameter and wraps the base prompt with _interpolate_prompt(_resolve_system_prompt(...)). The fork's patch prepended sections with _resolve_output_style_section(config) before appending config.system_prompt; in v2.13 this becomes: sections = list(_resolve_output_style_section(config)); sections.append(_interpolate_prompt(_resolve_system_prompt(config, experiment_manager))). The _resolve_output_style_section helper function itself is purely additive and has no dependency on experiment_manager."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "anchor": "_build_commands() dict — line 52; 'theme' Command is the last registered entry (line 177)",
+          "upstream_change": "v2.13 uses an identical CommandRegistry / Command dataclass pattern. The /style command does not exist in v2.13. Add a 'style' entry with aliases=frozenset(['/style']), handler='_set_output_style'. The CommandRegistry.parse_command() dispatch passes cmd_args to the handler via keyword argument, which matches _set_output_style(self, cmd_args: str = '', **kwargs)."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_show_status() method — line 1760; _show_theme() method — line 1791 (natural insertion point just after)",
+          "upstream_change": "v2.13 app.py still has _mount_and_scroll, UserCommandMessage, ErrorMessage, VibeConfig.save_updates, self.agent_loop.refresh_config(), self.agent_loop.refresh_system_prompt(), and self.config property. The _set_output_style() method body is identical to the fork except self.config.output_style is accessed via the property (already works). No BottomApp.Style enum value is needed — this command is text-based, not a bottom panel app."
+        },
+        {
+          "path": "vibe/core/prompts/",
+          "anchor": "directory — contains cli.md, explore.md, etc. No 'styles/' subdirectory exists",
+          "upstream_change": "v2.13 has no styles/ subdirectory. Create vibe/core/prompts/styles/ and add default.md, concise.md, learner.md. StyleManager._BUILTIN_STYLES_DIR points to VIBE_ROOT / 'core' / 'prompts' / 'styles' which resolves correctly given VIBE_ROOT is unchanged."
+        },
+        {
+          "path": "tests/conftest.py",
+          "anchor": "build_test_vibe_config(**kwargs) — line 253; accepts arbitrary **kwargs passed to VibeConfig()",
+          "upstream_change": "v2.13 conftest build_test_vibe_config already forwards **kwargs to VibeConfig. build_test_vibe_config(output_style='concise') works without changes to conftest. Test file can import from tests.conftest unchanged."
+        }
+      ],
+      "upstream_native_replacements": [],
+      "port_steps": [
+        "1. Create vibe/core/prompts/styles/ directory and copy in default.md, concise.md, learner.md verbatim from the fork.",
+        "2. Create vibe/core/output_styles/__init__.py and vibe/core/output_styles/manager.py verbatim from the fork (no changes needed — VIBE_ROOT and VIBE_HOME imports are the same in v2.13).",
+        "3. In vibe/core/config/_settings.py: add output_style: str = 'default' to VibeConfig after the auto_compact_threshold line (line 526 in v2.13).",
+        "4. In vibe/core/system_prompt.py: add the _resolve_output_style_section(config) function (verbatim from fork). In get_universal_system_prompt(), replace the first line `sections = [_interpolate_prompt(_resolve_system_prompt(config, experiment_manager))]` with two lines: `sections: list[str] = list(_resolve_output_style_section(config))` then `sections.append(_interpolate_prompt(_resolve_system_prompt(config, experiment_manager)))`. This preserves the v2.13 experiment_manager parameter.",
+        "5. In vibe/cli/commands.py: add 'style' entry to _build_commands() dict: Command(aliases=frozenset(['/style']), description='List or switch output style', handler='_set_output_style'). Insert after 'theme' entry (end of dict, before closing brace).",
+        "6. In vibe/cli/textual_ui/app.py: add the _set_output_style() method verbatim from the fork. Insert near the other text-based command handlers (e.g., after _show_theme(), around line 1794). No BottomApp enum change needed.",
+        "7. Create tests/core/output_styles/__init__.py (empty) and copy tests/core/output_styles/test_manager.py verbatim from the fork.",
+        "8. Copy tests/cli/textual_ui/test_style_command.py verbatim from the fork — all referenced symbols (build_test_vibe_config, build_test_agent_loop, build_test_vibe_app) exist unchanged in v2.13 conftest.",
+        "9. Run pytest tests/core/output_styles/ tests/cli/textual_ui/test_style_command.py to verify."
+      ],
+      "tests_to_migrate": [
+        "tests/core/output_styles/test_manager.py — migrate as-is; tests StyleManager in isolation with no app dependencies",
+        "tests/cli/textual_ui/test_style_command.py — migrate as-is; build_test_vibe_config(output_style=...) works via **kwargs forwarding; VibeConfig.save_updates monkeypatch pattern is identical in v2.13"
+      ],
+      "risks": [
+        "get_universal_system_prompt signature drift: v2.13 added experiment_manager: ExperimentManager | None = None param; the fork's patch prepends output_style before the base prompt. The merge must keep experiment_manager in the signature and wire _resolve_output_style_section before the _interpolate_prompt call. This is straightforward but requires reading both diffs simultaneously to not drop the experiment_manager wiring.",
+        "output_style field in VibeConfig: v2.13 VibeConfig remains a flat BaseSettings (no ConfigFragment/ConfigSchema refactor for scalar fields). The field adds cleanly. However if the team later switches to the layered ConfigSchema architecture for VibeConfig scalars, output_style would need a WithReplaceMerge annotation. Not a blocker for this port.",
+        "VibeConfig.save_updates vs. layered config write path: v2.13 still uses save_updates() for direct TOML writes (verified at line 999). The fork's _set_output_style() calls VibeConfig.save_updates({'output_style': arg}) which is the correct v2.13 write path. No conflict.",
+        "test_style_command.py imports from vibe.core.config import VibeConfig for monkeypatching save_updates — this is the same class in v2.13 so no import path changes needed.",
+        "TestStyleSwitchInPlanMode uses BuiltinAgentName.PLAN and agent_loop.agent_profile — verify BuiltinAgentName enum and agent_profile property still exist in v2.13 (likely yes given plan mode is a core feature, but worth a quick grep before committing the test)."
+      ],
+      "estimated_loc": 120,
+      "confidence": "high",
+      "_key": "output-styles"
+    },
+    {
+      "feature": "agents-ui: /agents picker UI + editor",
+      "difficulty": "yellow",
+      "phase": "P3",
+      "fork_files": [
+        {
+          "path": "vibe/cli/textual_ui/widgets/agents_picker.py",
+          "role": "New file: AgentsPickerApp Textual widget (140 LOC). Bottom-panel OptionList showing all available agents with highlighted active marker, system-prompt preview pane, and three messages: EditRequested, ViewFullRequested, Cancelled."
+        },
+        {
+          "path": "vibe/cli/textual_ui/agent_editor.py",
+          "role": "New file: resolve_edit_path() helper (70 LOC). For custom agents returns the on-disk TOML path; for builtins with no override creates a starter TOML at VIBE_HOME/agents/<name>.toml. Uses AgentManager._search_paths (private) and get_harness_files_manager().sources to gate user-level writes."
+        },
+        {
+          "path": "vibe/core/agents/manager.py",
+          "role": "Extended: (1) reload_from_disk() method — rescans search paths, preserves runtime-registered profiles (e.g. CHAT), falls back active profile to DEFAULT if deleted. (2) _runtime_registered set to track register_agent() calls. (3) _pre_plan_profile stash + pre_plan_profile property + switch_profile stash logic (PLAN-mode entry/exit bookkeeping — this is also used by the plan-mode feature but lives here)."
+        },
+        {
+          "path": "vibe/core/agents/models.py",
+          "role": "Extended: (1) GENERAL_PURPOSE builtin agent (new BuiltinAgentName, AgentProfile, added to BUILTIN_AGENTS). (2) _NON_PLAN_BASE_DISABLED = ['exit_plan_mode', 'enter_plan_mode'] shared constant applied to DEFAULT, ACCEPT_EDITS, AUTO_APPROVE, LEAN. (3) _PLAN_BASH_READ_ONLY_ALLOWLIST (~55 entries) + updated _plan_overrides() to use 'ask' permission and bash allowlist. (4) enter_plan_mode added to LEAN base_disabled."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "Extended: BottomApp.AgentsPicker enum entry; import AgentsPickerApp; /agents command (_show_agents handler); _switch_to_agents_picker_app(); three event handlers (on_agents_picker_app_cancelled, on_agents_picker_app_edit_requested, on_agents_picker_app_view_full_requested); _handle_agents_picker_app_escape(); AgentsPicker case in _focus_current_bottom_app match; escape routing to agents picker. Edit handler invokes $VISUAL/$EDITOR via subprocess+suspend, then manager.reload_from_disk() + agent_loop.refresh_config() + refresh_system_prompt()."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.tcss",
+          "role": "Extended: 7 CSS rules for #agentspicker-app, #agentspicker-content, .agentspicker-title, #agentspicker-options (with :focus), .agentspicker-preview, .agentspicker-help (~48 lines)."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "role": "Extended: added 'agents' Command with /agents alias pointing to _show_agents handler."
+        },
+        {
+          "path": "tests/core/test_agents.py",
+          "role": "Extended: 6 new reload_from_disk test cases (picks up new agent, re-reads edited agent, falls back to default when active deleted, preserves runtime-registered agents, skips unparseable TOML, plus existing tests for subagents/builtins)."
+        },
+        {
+          "path": "tests/cli/test_agent_editor.py",
+          "role": "New file: 5 tests for resolve_edit_path (custom agent returns TOML, creates override stub for builtin, second call returns existing override after reload, raises for unknown agent, raises when builtin filtered by config)."
+        },
+        {
+          "path": "tests/cli/test_ui_agents_picker.py",
+          "role": "New file: 1 async integration test — edit flow invokes $EDITOR and calls reload_from_disk via _switch_to_agents_picker_app + pilot.press('enter')."
+        },
+        {
+          "path": "tests/snapshots/test_ui_snapshot_agents_picker.py",
+          "role": "New file: 3 snapshot tests (initial state, navigate-down, escape-cancels) at 100x36 terminal."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/agents/manager.py",
+          "anchor": "AgentManager.register_agent (line 97)",
+          "upstream_change": "v2.13 has register_agent but NO _runtime_registered tracking, NO reload_from_disk(), NO _pre_plan_profile/_pre_plan_profile property, NO switch_profile stash logic. The method body is 2 lines vs fork's augmented version."
+        },
+        {
+          "path": "vibe/core/agents/manager.py",
+          "anchor": "AgentManager.switch_profile (line 93)",
+          "upstream_change": "v2.13 switch_profile is 2 lines (just sets active_profile + clears cache). Fork adds 8 lines of pre-plan stash logic before calling get_agent()."
+        },
+        {
+          "path": "vibe/core/agents/models.py",
+          "anchor": "BuiltinAgentName enum (line 38) and BUILTIN_AGENTS dict (line 201)",
+          "upstream_change": "v2.13 lacks GENERAL_PURPOSE entry. _NON_PLAN_BASE_DISABLED constant does not exist; DEFAULT/ACCEPT_EDITS/AUTO_APPROVE/LEAN each hardcode ['exit_plan_mode'] only. _plan_overrides() uses 'never' permission and no bash allowlist. enter_plan_mode is NOT disabled in non-PLAN profiles."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "class BottomApp(StrEnum) (line 216)",
+          "upstream_change": "v2.13 BottomApp lacks AgentsPicker variant. v2.13 added ThemePicker variant (not in fork). The _focus_current_bottom_app match-statement has no AgentsPicker case; the _try_interrupt_bottom_app_escape chain has no agents-picker branch. v2.13 app.py is 209 lines shorter than fork."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_focus_current_bottom_app (line 2388 in v2.13)",
+          "upstream_change": "v2.13 uses assert_never exhaustive match; adding AgentsPicker enum + case without adding the handler case will trigger a type error at import time via assert_never."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_try_interrupt_bottom_app_escape / action_interrupt chain (line 2713 in v2.13)",
+          "upstream_change": "v2.13 has no agents-picker escape branch in this elif chain; the fork routes escape to _handle_agents_picker_app_escape() from within this chain."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "anchor": "CommandRegistry command dict",
+          "upstream_change": "v2.13 has no 'agents' Command entry. The /agents command and _show_agents handler are entirely absent."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.tcss",
+          "anchor": "end of file (after FeedbackBar block ~line 1237 in fork)",
+          "upstream_change": "v2.13 app.tcss has no agentspicker rules. The CSS must be appended."
+        }
+      ],
+      "upstream_native_replacements": [],
+      "port_steps": [
+        "1. vibe/core/agents/models.py — add BuiltinAgentName.GENERAL_PURPOSE = 'general-purpose'; add _NON_PLAN_BASE_DISABLED = ['exit_plan_mode', 'enter_plan_mode']; apply _NON_PLAN_BASE_DISABLED to DEFAULT, ACCEPT_EDITS, AUTO_APPROVE overrides; add enter_plan_mode to LEAN base_disabled; add _PLAN_BASH_READ_ONLY_ALLOWLIST constant; update _plan_overrides() to use 'ask' permission + bash allowlist entry; add GENERAL_PURPOSE AgentProfile instance; register in BUILTIN_AGENTS. Note: _PLAN_BASH_READ_ONLY_ALLOWLIST and plan_overrides changes are shared with the plan-mode feature (P5) — coordinate to avoid double-applying.",
+        "2. vibe/core/agents/manager.py — (a) add _runtime_registered: set[str] = set() to __init__; (b) add _pre_plan_profile: str | None = None to __init__; (c) add pre_plan_profile property; (d) extend switch_profile() with the PLAN-entry stash logic; (e) extend register_agent() to add profile.name to _runtime_registered; (f) add reload_from_disk() method. Items (b)/(c)/(d) are shared with plan-mode (P5) — add them once, here or in P5, with coordination note.",
+        "3. vibe/cli/textual_ui/widgets/agents_picker.py — copy file verbatim from fork. No v2.13 conflicts; widget is entirely new. Verify import of NoMarkupStatic resolves at the same path in v2.13.",
+        "4. vibe/cli/textual_ui/agent_editor.py — copy file verbatim from fork. Import paths (AgentManager, BUILTIN_AGENTS, AgentProfile, AgentType, get_harness_files_manager, VIBE_HOME) are identical in v2.13. The private _search_paths access and sources check remain valid.",
+        "5. vibe/cli/commands.py — add the 'agents' Command entry (aliases=frozenset(['/agents']), description, handler='_show_agents') to the CommandRegistry dict. v2.13 already has /plan (from P5) and /stat (from P4) to slot around.",
+        "6. vibe/cli/textual_ui/app.py — six coordinated edits: (a) add 'import shlex, subprocess' if not already present (needed by edit handler); (b) add AgentsPicker = auto() to BottomApp enum; (c) add 'from vibe.cli.textual_ui.widgets.agents_picker import AgentsPickerApp' to imports; (d) add _show_agents() handler method; (e) add _switch_to_agents_picker_app() method; (f) add on_agents_picker_app_cancelled / on_agents_picker_app_edit_requested / on_agents_picker_app_view_full_requested event handlers; (g) add AgentsPicker case to _focus_current_bottom_app match (before assert_never — mandatory for exhaustive match); (h) add agents-picker escape branch to _try_interrupt_bottom_app_escape(); (i) route escape key from BottomApp.AgentsPicker in the global escape handler to _handle_agents_picker_app_escape().",
+        "7. vibe/cli/textual_ui/app.tcss — append the 7 agentspicker CSS rules (identical to fork). No v2.13 naming conflicts.",
+        "8. tests/core/test_agents.py — port the 6 reload_from_disk test methods from the fork onto v2.13's existing TestAgentManager class. The basic EXPLORE/subagent tests are already present in v2.13 and must not be duplicated.",
+        "9. tests/cli/test_agent_editor.py — copy file verbatim from fork (all 5 test functions). Verify build_test_vibe_config signature accepts agent_paths and enabled_agents kwargs in v2.13.",
+        "10. tests/cli/test_ui_agents_picker.py — copy file verbatim from fork. Verify build_test_vibe_app exists in v2.13 conftest.",
+        "11. tests/snapshots/test_ui_snapshot_agents_picker.py — copy file verbatim from fork. Run snap-update pass to regenerate __snapshots__ images against v2.13 terminal rendering."
+      ],
+      "tests_to_migrate": [
+        "tests/core/test_agents.py: 6 new test_reload_from_disk_* methods (new; absent from v2.13)",
+        "tests/cli/test_agent_editor.py: entire file (new; absent from v2.13)",
+        "tests/cli/test_ui_agents_picker.py: entire file (new; absent from v2.13)",
+        "tests/snapshots/test_ui_snapshot_agents_picker.py: entire file + regenerate snapshots (new; absent from v2.13)",
+        "tests/core/test_agents.py: existing TestAgentProfile and basic TestAgentManager tests — already present in v2.13, do NOT re-add"
+      ],
+      "risks": [
+        "BottomApp assert_never: v2.13 _focus_current_bottom_app uses assert_never for exhaustive match. Adding BottomApp.AgentsPicker enum value without adding the corresponding case arm causes a Pyright/mypy type error and a runtime crash if focus is requested while on AgentsPicker. Must add the case in the same commit.",
+        "_pre_plan_profile / switch_profile stash is shared with P5 (plan-mode feature): both features touch manager.py switch_profile(). If P5 is ported first, step 2(b-d) may already be present; if agents-ui is ported first, P5 must not overwrite them. Needs merge coordination.",
+        "_PLAN_BASH_READ_ONLY_ALLOWLIST and _plan_overrides() changes also belong to P5: these are logically plan-mode changes bundled in models.py. Port them consistently with P5 or split into a shared step.",
+        "agent_editor.py accesses AgentManager._search_paths (private attribute, underscore-prefixed). v2.13 manager still has _search_paths (confirmed at line 29 of v2.13 manager.py), but it could be removed in future upstreams. Consider adding a public property.",
+        "reload_from_disk() calls _compute_search_paths(self._config) and _discover_agents() which are @staticmethod and instance method respectively; both exist in v2.13 (lines 104, 120). No conflict expected but verify _discover_agents signature hasn't changed (it hasn't — same body).",
+        "subprocess.run + self.suspend() in on_agents_picker_app_edit_requested: v2.13 already uses suspend() for other features, but the import of shlex and subprocess must be added to app.py if not already present (check: v2.13 app.py imports show neither shlex nor subprocess).",
+        "Snapshot tests: v2.13 may render slightly differently (theme changes, Textual version bump). Snapshots from the fork will fail on first run and require a regeneration pass (snap-update). Plan for an extra CI step.",
+        "GENERAL_PURPOSE agent and system_prompt_id='general_purpose': the system prompt resolver must have a 'general_purpose' prompt ID registered. Verify vibe/core/prompts/__init__.py in v2.13 has or can accept this ID (fork has GENERAL_PURPOSE = auto() in the PromptId enum at line 26 of vibe/core/prompts/__init__.py — this must also be ported)."
+      ],
+      "estimated_loc": 520,
+      "confidence": "high",
+      "_key": "agents-ui"
+    },
+    {
+      "feature": "stat-timeline-ui",
+      "difficulty": "yellow",
+      "phase": "P4",
+      "fork_files": [
+        {
+          "path": "vibe/cli/textual_ui/widgets/stat_timeline.py",
+          "role": "NEW FILE — StatTimelineApp Container widget (DataTable per-turn breakdown, Escape/Cancelled message, g/G scroll bindings, 1-second live refresh via set_interval, adaptive columns by terminal width)"
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/stat_overview.py",
+          "role": "NEW FILE — StatOverviewMessage Static widget (Rich Panel summary, 1-second live refresh, ExpandingBorder layout identical to UserCommandMessage)"
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/messages.py",
+          "role": "MODIFIED — replaces MarkdownStream with _PlainTextStreamAdapter + NoMarkupStatic during streaming, upgrades to Markdown once at stop_stream (_finalize_to_markdown); adds _flush_interval_s throttle (33ms) and class-level _streaming_static/_finalized fields; ReasoningMessage set_collapsed adapted for mid-stream static vs. post-stream Markdown"
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "MODIFIED — adds StatTimeline to BottomApp enum; imports StatOverviewMessage + StatTimelineApp; adds _show_stat() handler, _switch_to_stat_timeline_app(), on_stat_timeline_app_cancelled(); adds StatTimeline arm to _focus_current_bottom_app match; adds _handle_stat_timeline_app_escape() into _try_interrupt_bottom_app_escape elif chain"
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "role": "MODIFIED — renames 'status' command to 'stat', adds /status as alias, changes description and handler to _show_stat, adds cmd_args support"
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.tcss",
+          "role": "MODIFIED — adds .stat-overview-message, .stat-overview-container, .stat-overview-border, .stat-overview-content CSS blocks; adds #stattimeline-app, #stat-timeline-root/header/empty/table CSS blocks; uses legacy ansi_bright_black/ansi_blue color names"
+        },
+        {
+          "path": "vibe/core/types.py",
+          "role": "MODIFIED — adds TurnRecord dataclass (index, prompt_tokens, cached_tokens, completion_tokens, duration, started_at, tools: list[str]); adds session_cached_tokens + last_turn_cached_tokens + turns: list[TurnRecord] to AgentStats; adds cached_prompt_tokens to LLMUsage"
+        },
+        {
+          "path": "tests/cli/test_stat_overview.py",
+          "role": "NEW FILE — unit tests for render_stat_overview and StatOverviewMessage"
+        },
+        {
+          "path": "tests/cli/test_stat_timeline.py",
+          "role": "NEW FILE — unit tests for format_tools_cell, cache_sparkline, _cache_pct, _row_for, timeline_columns_for_width"
+        },
+        {
+          "path": "tests/cli/test_show_stat_handler.py",
+          "role": "NEW FILE — unit tests for VibeApp._show_stat dispatch (no-arg, timeline arg, unknown arg)"
+        },
+        {
+          "path": "tests/cli/textual_ui/test_streaming_message_buffer.py",
+          "role": "NEW FILE — unit tests for StreamingMessageBase buffer/throttle logic (TestAppendContent, TestStopStream, TestWriteInitialContent, TestFlushThrottle)"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "class BottomApp(StrEnum) at line 216",
+          "upstream_change": "v2.13 BottomApp enum has 12 members (Approval, Config, ConnectorAuth, Input, MCP, ModelPicker, ProxySetup, Question, ThemePicker, ThinkingPicker, Rewind, SessionPicker, Voice) — no StatTimeline, no AgentsPicker. Both must be added. The assert_never(app) exhaustiveness guard in _focus_current_bottom_app means adding a new BottomApp member requires a matching case arm or the app crashes at runtime."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_try_interrupt_bottom_app_escape() at line 2713",
+          "upstream_change": "v2.13 escape chain has 9 elif branches ending with Rewind -> run_worker. StatTimeline elif must be inserted before Rewind to match fork's ordering."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_show_status() at line 1760",
+          "upstream_change": "v2.13 retains a plain text /status handler (_show_status) that renders a simple Markdown summary — no widget, no timeline. Our port replaces this entirely with _show_stat(). The command entry in commands.py still has key 'status', handler '_show_status'."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "anchor": "'status': Command(..., handler='_show_status') at line 110",
+          "upstream_change": "v2.13 has 'status' key with aliases ['/status'] and handler '_show_status'. Fork renames the key to 'stat', adds '/status' as alias, and points to '_show_stat'. Port must change this dict entry; the old '_show_status' method in app.py can then be removed."
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/messages.py",
+          "anchor": "class StreamingMessageBase at line 114 + class ReasoningMessage at line 202",
+          "upstream_change": "v2.13 still uses MarkdownStream from textual.widgets._markdown (Textual 8.2.7 preserves this API). StreamingMessageBase.__init__ holds self._markdown and self._stream: MarkdownStream. Our _PlainTextStreamAdapter, _streaming_static, _finalize_to_markdown, and _flush_interval_s are completely absent. ReasoningMessage.set_collapsed still does the old stream-reset pattern. The entire streaming-render rework must be applied from scratch to v2.13's messages.py."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.tcss",
+          "anchor": ".interrupt-container, .error-container, .warning-container, .user-command-container block at line 452",
+          "upstream_change": "v2.13 TCSS uses $foreground-muted and $primary CSS variables everywhere instead of the literal ansi_bright_black/ansi_blue color names the fork uses. The stat widget CSS blocks must be translated to use CSS variables so they work with the v2.13 theme system."
+        },
+        {
+          "path": "vibe/core/types.py",
+          "anchor": "class AgentStats(BaseModel) at line 47 + class LLMUsage(BaseModel) at line 332",
+          "upstream_change": "v2.13 AgentStats is missing: session_cached_tokens, last_turn_cached_tokens, cleared_tool_results, turns: list[TurnRecord]. LLMUsage is missing cached_prompt_tokens. TurnRecord does not exist anywhere in v2.13. These fields are the data coupling: agent_loop must populate them (covered under the agent_loop/P4 task), but the type definitions live here."
+        }
+      ],
+      "upstream_native_replacements": [],
+      "port_steps": [
+        "1. vibe/core/types.py: add TurnRecord dataclass; extend AgentStats with session_cached_tokens, last_turn_cached_tokens, cleared_tool_results, turns: list[TurnRecord]; extend LLMUsage with cached_prompt_tokens and update its __add__. (This is the shared data contract; agent_loop population is tracked separately under P4.)",
+        "2. vibe/cli/textual_ui/widgets/messages.py: apply the full _PlainTextStreamAdapter + streaming-static rework. Specifically: (a) add import time; add _STREAM_FLUSH_INTERVAL_S = 0.033; define _PlainTextStreamAdapter class; (b) add class-level _streaming_static/_finalized/_flush_interval_s/_last_flush_monotonic to StreamingMessageBase; (c) replace _get_markdown / _ensure_stream with _create_streaming_static / _build_markdown_widget / _ensure_stream returning _PlainTextStreamAdapter; (d) rewrite append_content with the throttle gate; (e) rewrite stop_stream to call _finalize_to_markdown; (f) add _finalize_to_markdown; (g) update AssistantMessage.compose to yield self._create_streaming_static(); (h) update ReasoningMessage.compose and set_collapsed for mid-stream static vs. post-stream Markdown distinction. Tests in test_streaming_message_buffer.py must pass after this step.",
+        "3. vibe/cli/textual_ui/widgets/stat_overview.py: copy file verbatim from fork. The only import dependency is ExpandingBorder (present in v2.13 messages.py line 41) and AgentStats (present in v2.13 types.py). No changes required.",
+        "4. vibe/cli/textual_ui/widgets/stat_timeline.py: copy file verbatim from fork. Import dependencies are AgentStats and TurnRecord (both added in step 1). No changes required.",
+        "5. vibe/cli/commands.py: replace the 'status' entry (key, aliases, handler) with the fork's 'stat' entry: key='stat', aliases=frozenset(['/stat', '/status']), description='Display session statistics. Pass timeline for per-turn breakdown', handler='_show_stat'.",
+        "6. vibe/cli/textual_ui/app.py — BottomApp enum: add StatTimeline = auto() member (after SessionPicker, before Voice, to match fork ordering).",
+        "7. vibe/cli/textual_ui/app.py — imports: add 'from vibe.cli.textual_ui.widgets.stat_overview import StatOverviewMessage' and 'from vibe.cli.textual_ui.widgets.stat_timeline import StatTimelineApp'.",
+        "8. vibe/cli/textual_ui/app.py — add _show_stat() and _switch_to_stat_timeline_app() methods (copy verbatim from fork; they rely on self.agent_loop.config.get_active_model().auto_compact_threshold which exists in v2.13).",
+        "9. vibe/cli/textual_ui/app.py — remove _show_status() (now dead; the command points to _show_stat instead).",
+        "10. vibe/cli/textual_ui/app.py — add on_stat_timeline_app_cancelled() event handler (copy from fork).",
+        "11. vibe/cli/textual_ui/app.py — _focus_current_bottom_app(): add 'case BottomApp.StatTimeline: self.query_one(StatTimelineApp).focus()' before the Voice arm (before the assert_never arm).",
+        "12. vibe/cli/textual_ui/app.py — _try_interrupt_bottom_app_escape(): add 'elif self._current_bottom_app == BottomApp.StatTimeline: self._handle_stat_timeline_app_escape()' before the Rewind branch; add _handle_stat_timeline_app_escape() helper method.",
+        "13. vibe/cli/textual_ui/app.tcss: add .stat-overview-message, .stat-overview-container, .stat-overview-border, .stat-overview-content blocks; add #stattimeline-app, #stat-timeline-root, #stat-timeline-header, #stat-timeline-empty, #stat-timeline-table, #stat-timeline-table:focus blocks. Translate color names: ansi_bright_black -> $foreground-muted, ansi_blue -> $primary (matching v2.13 theming conventions).",
+        "14. Copy test files: tests/cli/test_stat_overview.py, tests/cli/test_stat_timeline.py, tests/cli/test_show_stat_handler.py, tests/cli/textual_ui/test_streaming_message_buffer.py. The test_streaming_message_buffer.py tests are tied to the _PlainTextStreamAdapter changes (step 2) and will only pass after that step. test_show_stat_handler.py stubs out _switch_to_stat_timeline_app as AsyncMock so it is independent of widget internals.",
+        "15. Run the full test suite. Expected friction: test_streaming_message_buffer.py tests the new buffer/throttle path; test_show_stat_handler.py stubs VibeApp at class level — verify VibeApp.__new__ still works in v2.13."
+      ],
+      "tests_to_migrate": [
+        "tests/cli/test_stat_overview.py — port verbatim; tests render_stat_overview and StatOverviewMessage.compose; pure-unit, no Textual app harness needed",
+        "tests/cli/test_stat_timeline.py — port verbatim; tests pure formatting functions (format_tools_cell, cache_sparkline, _row_for, timeline_columns_for_width); no Textual harness needed",
+        "tests/cli/test_show_stat_handler.py — port verbatim; tests VibeApp._show_stat dispatch via VibeApp.__new__ stub + AsyncMock; depends on TurnRecord-extended AgentStats (step 1) and _show_stat method (step 8)",
+        "tests/cli/textual_ui/test_streaming_message_buffer.py — port verbatim; tests the full _PlainTextStreamAdapter + throttle layer on StreamingMessageBase; depends on step 2 (messages.py rework); MessageTestDouble sets _flush_interval_s=0.0 to disable throttle in most tests"
+      ],
+      "risks": [
+        "MarkdownStream API preserved in Textual 8.2.7: the fork's motivation was performance — MarkdownStream re-parses markdown per chunk, so _PlainTextStreamAdapter defers parse cost to stop_stream. Textual 8.2.7 (vs 8.2.4 in the fork) may have improved MarkdownStream performance, but since v2.13 still uses it and we are replacing it, verify the swap does not regress rendering fidelity (e.g. mid-stream collapse/uncollapse on ReasoningMessage).",
+        "assert_never exhaustiveness in _focus_current_bottom_app: v2.13 uses assert_never(app) as the final match arm. Adding StatTimeline to BottomApp without adding a matching case arm will cause a mypy/type error and an AssertionError at runtime when StatTimeline is active. Step 11 must not be skipped.",
+        "CSS theming mismatch: the fork uses literal ansi_bright_black/ansi_blue color names (visible in app.tcss line 5-6, confirmed). v2.13 uses $foreground-muted/$primary CSS variables throughout. Using fork color names verbatim in v2.13 will render correctly in dark terminal mode but will break light theme and CSS variable theming if v2.13 has a theme switcher (ThemePickerApp is confirmed present). Must translate.",
+        "TurnRecord.tools is mutable list: stat_timeline.py relies on tools being populated after TurnRecord is appended to AgentStats.turns (the dispatch layer appends tool names). If agent_loop populates turns at end-of-turn rather than during execution, the timeline will show empty tools cells until the next refresh tick. This is an agent_loop coupling risk, not a widget risk, but must be coordinated with the P4 agent_loop hooks task.",
+        "test_streaming_message_buffer.py MessageTestDouble bypasses Textual entirely: it sets _flush_interval_s=0.0 and overrides _ensure_stream to return a FakeStream. After the messages.py rework, _ensure_stream returns _PlainTextStreamAdapter, not MarkdownStream — the test double patches this via the override, which is correct. But if the v2.13 port changes the stop_stream path to call _finalize_to_markdown (which requires self._streaming_static.parent), tests that call stop_stream without a mounted widget will call _finalize_to_markdown which returns early when parent is None. Verify the test double handles this path (it currently does not set _streaming_static so _finalize_to_markdown returns early — this is safe).",
+        "session_cached_tokens listener: the fork adds session_cached_tokens to AgentStats. v2.13 AgentStats.__setattr__ fires listeners keyed by attr_name. If any existing v2.13 code adds a listener for 'session_cached_tokens' before we add the field (unlikely but possible via dynamic attribute set), it will be silently ignored until the field is formally declared. Low risk but worth a grep after porting."
+      ],
+      "estimated_loc": 420,
+      "confidence": "high",
+      "_key": "stat-timeline-ui"
+    },
+    {
+      "feature": "agent-loop-hooks (P4): the three AgentLoop hook groups shared by plan-mode / microcompact / stat — (1) TurnRecord+cached-token stat collection in _update_stats/_record_dispatched_tool, (2) MicroCompactMiddleware trigger in _setup_middleware, (3) plan-mode dispatch interception (write-gate in _execute_tool_call, _pending_fork_to_dev lifecycle, _maybe_prompt_plan_confirmation, _plan_modified_in_turn, the act()-loop fork break, and the acp re-entry loop).",
+      "difficulty": "red",
+      "phase": "P4",
+      "fork_files": [
+        {
+          "path": "vibe/core/agent_loop.py",
+          "role": "PRIMARY. +556 churn carrying all three hook groups. Hosts _update_stats (cached+TurnRecord), _record_dispatched_tool, MicroCompactMiddleware wiring in _setup_middleware, the plan write-gate inside _execute_tool_call, _plan_modified_in_turn tracking in _handle_tool_response, _maybe_prompt_plan_confirmation, request_fork_to_dev/fork_to_dev/pending_fork_to_dev, the act()/_conversation_loop break-for-fork logic, switch_agent plan_session rotation, clear_history wipe, and the INJECT_MESSAGE assistant-ack prepend + _close_orphan_trailing_tool_message. NOTE: this diff also bundles UNRELATED features (_sanitize_tool_call_arguments, _promote_inline_tool_calls, metadata-removal) that belong to other port phases — do NOT pull those in under P4."
+        },
+        {
+          "path": "vibe/core/types.py",
+          "role": "DEPENDENCY for group 1. Adds TurnRecord model; AgentStats gains session_cached_tokens, last_turn_cached_tokens, cleared_tool_results, turns: list[TurnRecord]; reset_context_state resets last_turn_cached_tokens; LLMUsage gains cached_prompt_tokens (+__add__ accumulation). v2.13 AgentStats (line 47) and LLMUsage (line 332) have none of these."
+        },
+        {
+          "path": "vibe/core/compact/micro.py",
+          "role": "DEPENDENCY for group 2 (NEW FILE, not in v2.13). Defines CLEARABLE_TOOLS, micro_compact(), and MicroCompactMiddleware. Uses MessageList.silent(), stats.cleared_tool_results, stats.context_tokens, config.micro_compact_ratio/micro_keep_last, model.auto_compact_threshold."
+        },
+        {
+          "path": "vibe/core/middleware.py",
+          "role": "DEPENDENCY for group 3 reminder side. Adds make_plan_agent_sparse_reminder() and extends ReadOnlyAgentMiddleware.__init__ with sparse_reminder/sparse_every_n_turns plus _turns_since_reminder counter and sparse_reminder_text property. v2.13 ReadOnlyAgentMiddleware (line 193) is the 4-arg version with no sparse support."
+        },
+        {
+          "path": "vibe/core/config.py",
+          "role": "DEPENDENCY for group 2. Adds micro_compact_ratio and micro_keep_last config fields (absent in v2.13 config.py)."
+        },
+        {
+          "path": "vibe/core/tools/base.py",
+          "role": "DEPENDENCY for group 3. Adds mutates_state: ClassVar[bool]=True to BaseTool and request_fork_to_dev_callback to InvokeContext. v2.13 InvokeContext (line 44) has switch_agent_callback but no request_fork_to_dev_callback; v2.13 has no mutates_state concept anywhere."
+        },
+        {
+          "path": "vibe/core/tools/builtins/*.py",
+          "role": "DEPENDENCY for group 3. Per-tool mutates_state overrides: bash/search_replace/write_file/task=True; read_file/grep/webfetch/websearch/todo/skill/ask_user_question/exit_plan_mode/enter_plan_mode=False. Must be re-applied to each v2.13 builtin."
+        },
+        {
+          "path": "vibe/core/agents/manager.py",
+          "role": "DEPENDENCY for group 3. Adds pre_plan_profile / _pre_plan_profile (stash of the profile active before entering PLAN) used by _maybe_prompt_plan_confirmation's 'request approval for edits' branch and reset in clear_history. v2.13 manager has available_agents/get_agent but no pre_plan_profile."
+        },
+        {
+          "path": "vibe/core/llm/backend/mistral.py",
+          "role": "DEPENDENCY for group 1 cached-token source. Fork reads usage prompt_tokens_details.cached_tokens into LLMUsage.cached_prompt_tokens. v2.13 mistral usage blocks (lines 317-320 non-stream, 396-402 stream) only set prompt/completion."
+        },
+        {
+          "path": "vibe/acp/acp_agent_loop.py",
+          "role": "group 3 host. Wraps act() in a loop: after each act() returns, if agent_loop.pending_fork_to_dev is set, calls fork_to_dev() and re-enters with the returned seed prompt. v2.13 acp_agent_loop.py exists (69KB) — locate VibeAcpAgentLoop's prompt/act loop (fork diff anchored at class VibeAcpAgentLoop ~line 928) and wrap it identically."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_update_stats(self, usage, time_seconds) — v2.13 line 1454",
+          "upstream_change": "Body unchanged from 2.9.6 (sets last_turn_*, session_*, context_tokens, tokens_per_second). Insert the 3 cached-token lines and the self.stats.turns.append(TurnRecord(...)) block here. started_at uses time.time()-time_seconds; index uses self.stats.steps."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_execute_tool_call — after `tool_instance = self.tool_manager.get(...)` and BEFORE `decision = await self._should_execute_tool(...)` — v2.13 lines 1100-1107",
+          "upstream_change": "Refactored vs 2.9.6: tool dispatch was extracted into _process_one_tool_call -> _execute_tool_call -> _run_tools_concurrently (concurrent queue model). The plan write-gate block must land at the top of _execute_tool_call (right after get tool_instance). Uses self.agent_manager.active_profile.name==PLAN, tool_instance.__class__.mutates_state, _PLAN_GATE_BYPASS_TOOLS, resolve_permission ALWAYS bypass, and task->AgentSafety.SAFE carve-out. _tool_failure_event is available here."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_execute_tool_call — `self.stats.tool_calls_agreed += 1` (v2.13 line 1132)",
+          "upstream_change": "Unchanged location. Add self._record_dispatched_tool(tool_call.tool_name) immediately after the increment (same line the fork added it). Also add request_fork_to_dev_callback=self.request_fork_to_dev to the InvokeContext(...) constructed at line 1141-1154."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_handle_tool_response(...) — v2.13 line 1275",
+          "upstream_change": "Body builds tool response message + telemetry, unchanged. Insert the _plan_modified_in_turn detection block (success + PLAN + write_file/search_replace + path matches plan_session.plan_file_path) right after the messages.append, before telemetry."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_setup_middleware — `self.middleware_pipeline.add(AutoCompactMiddleware())` (v2.13 line 751)",
+          "upstream_change": "Unchanged. Insert self.middleware_pipeline.add(MicroCompactMiddleware()) immediately before it. Also extend the ReadOnlyAgentMiddleware(PLAN) constructor (line 755-768) with sparse_reminder=lambda: make_plan_agent_sparse_reminder(self._plan_session.plan_file_path_str) and sparse_every_n_turns=5."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_conversation_loop — `if should_break_loop and self._hooks_manager:` (v2.13 line 931)",
+          "upstream_change": "Loop structure preserved from 2.9.6 (should_break_loop = last_message.role != Role.tool at line 923, drain injections, hooks at 931). Insert the fork-break logic: before the hooks block, add `if self._pending_fork_to_dev is not None: should_break_loop = True` / `elif should_break_loop: await self._maybe_prompt_plan_confirmation()`, and gate the hooks block with `and self._pending_fork_to_dev is None`. Also add `self._plan_modified_in_turn = False` at the top of the try (line ~896)."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_handle_middleware_result — case MiddlewareAction.INJECT_MESSAGE (v2.13 line 788)",
+          "upstream_change": "Unchanged. Fork prepends a synthetic assistant ack when self.messages[-1].role==Role.tool before injecting the user reminder (so sparse reminders actually fire after tool messages on strict backends). Needed for group 3 sparse reminders to land."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "switch_agent(self, agent_name) — v2.13 line 1755; clear_history — line 1655; _clean_message_history — line 1536",
+          "upstream_change": "switch_agent unchanged (3 lines). Add leaving_plan capture + post-reload `if leaving_plan: self._plan_session = PlanSession()`. clear_history (line 1655) must also wipe _plan_session/_pending_fork_to_dev/_plan_modified_in_turn/agent_manager._pre_plan_profile before _reset_session. _clean_message_history (line 1536) gains _close_orphan_trailing_tool_message() (shared with the cancel-repair feature)."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "AgentLoop.__init__ (v2.13 line 234-326)",
+          "upstream_change": "Add the two instance attrs the hooks read: self._pending_fork_to_dev: tuple[str,Path,str]|None = None and self._plan_modified_in_turn: bool = False (fork placed them after entrypoint_metadata assignment ~line 326)."
+        },
+        {
+          "path": "vibe/acp/acp_agent_loop.py",
+          "anchor": "class VibeAcpAgentLoop — the prompt-handling method that drives act() (fork diff @@ around line 928)",
+          "upstream_change": "v2.13 file is large (69KB) and may have refactored the prompt entrypoint; grep for the `async for ... in session.agent_loop.act(` call site and wrap it in a while loop that re-enters via fork_to_dev() while pending_fork_to_dev is set."
+        }
+      ],
+      "upstream_native_replacements": [],
+      "port_steps": [
+        "STEP 0 (prereqs, shared deps): Port vibe/core/types.py first — add TurnRecord model and the AgentStats fields (session_cached_tokens, last_turn_cached_tokens, cleared_tool_results, turns) + reset_context_state line + LLMUsage.cached_prompt_tokens and its __add__ accumulation. Nothing else compiles without this.",
+        "STEP 1 (group 1 source): Port vibe/core/llm/backend/mistral.py — add cached_prompt_tokens=details.get('cached_tokens',0) sourced from usage.prompt_tokens_details into BOTH LLMUsage constructions (non-stream line ~318, stream line ~397). Verify the v2.13 SDK usage object still exposes prompt_tokens_details (fork relied on it via dict access; confirm shape).",
+        "STEP 2 (group 1 collection): In v2.13 agent_loop.py _update_stats (line 1454) add the 3 cached lines + the stats.turns.append(TurnRecord(...)) block. Add _record_dispatched_tool method and call it in _execute_tool_call right after `tool_calls_agreed += 1` (line 1132). This is the minimal stat-hook slice.",
+        "STEP 3 (group 2): Add config fields micro_compact_ratio + micro_keep_last to config.py. Copy vibe/core/compact/micro.py verbatim (check MessageList.silent / Role / ResetReason imports still resolve in v2.13). Wire MicroCompactMiddleware() into _setup_middleware just before AutoCompactMiddleware (line 751). Confirm cleared_tool_results field exists (from STEP 0).",
+        "STEP 4 (group 3 deps): Add mutates_state ClassVar to BaseTool and request_fork_to_dev_callback to InvokeContext (tools/base.py). Re-apply per-tool mutates_state overrides to each v2.13 builtin (write_file/search_replace/bash/task=True; the read-only ones=False). Add pre_plan_profile/_pre_plan_profile to AgentManager and set it on entering PLAN in switch_profile (re-check v2.13 switch_profile shape).",
+        "STEP 5 (group 3 core): In agent_loop.py add __init__ attrs (_pending_fork_to_dev, _plan_modified_in_turn); add the plan write-gate block at top of _execute_tool_call (with _PLAN_GATE_BYPASS_TOOLS + AgentSafety.SAFE task carve-out); add InvokeContext request_fork_to_dev_callback; add the _plan_modified_in_turn detection in _handle_tool_response; add _maybe_prompt_plan_confirmation, request_fork_to_dev, pending_fork_to_dev property, fork_to_dev; wire the fork-break logic + reset flag into _conversation_loop; add the INJECT_MESSAGE assistant-ack prepend; add switch_agent plan_session rotation; extend clear_history wipe and _clean_message_history orphan-close.",
+        "STEP 6 (group 3 reminder): Port middleware.py make_plan_agent_sparse_reminder + ReadOnlyAgentMiddleware sparse_reminder/sparse_every_n_turns support, then wire sparse_reminder into the PLAN ReadOnlyAgentMiddleware in _setup_middleware.",
+        "STEP 7 (group 3 acp): Port the acp_agent_loop.py re-entry loop around the act() call.",
+        "STEP 8: Run the migrated tests (STEP-by-STEP: stats tests after 2, micro tests after 3, plan/fork after 5-7)."
+      ],
+      "tests_to_migrate": [
+        "tests/core/test_agent_loop_stats.py — migrate as-is; constructs AgentLoop via __new__ and calls _update_stats directly, asserts cached tracking + TurnRecord append. Validates group 1.",
+        "tests/core/test_stats.py — migrate; pure model tests on LLMUsage.cached_prompt_tokens + TurnRecord. Validates STEP 0.",
+        "tests/core/compact/test_micro.py — migrate (NEW dir tests/core/compact/); exercises micro_compact below/at threshold, protected-last-N, greedy clearing. Validates group 2.",
+        "tests/test_turn_summary.py — partially relevant; fork shrank it (69 -> diff). It mainly tests cli/turn_summary.py which is a SEPARATE narrator feature, NOT an agent_loop hook. Only migrate if turn_summary itself is being ported in another phase; otherwise out of scope for P4.",
+        "tests/core/tools/test_mutates_state.py — migrate; asserts each builtin's mutates_state ClassVar. Validates STEP 4 dependency.",
+        "tests/cli/test_plan_command.py, tests/cli/test_show_stat_handler.py, tests/cli/test_stat_overview.py, tests/cli/test_stat_timeline.py — these test the /stat and /plan CLI consumers of stats.turns; they belong to the CLI/UI port phase (P3/P5), not the agent_loop hook port. Migrate only after the CLI consumers are ported."
+      ],
+      "risks": [
+        "v2.13 ships NO native replacement for any of the three groups (no microcompact, no cached-token tracking, no fork_to_dev, no plan write-gate, no mutates_state) — so this is pure additive porting, and the whole +556 churn lands manually. Nothing can be deleted as 'now native'.",
+        "The fork's single agent_loop.py diff BUNDLES unrelated features (_sanitize_tool_call_arguments, _promote_inline_tool_calls, telemetry metadata removal at _chat/_chat_streaming, the secondary_call metadata_getter removal in MCPSamplingHandler). These are NOT part of P4 and must be split out so P4 doesn't accidentally drop v2.13's metadata plumbing. v2.13 still passes metadata=...model_dump() to backend.complete (lines 1352, 1417) — keep it.",
+        "Concurrent tool execution: v2.13 _run_tools_concurrently dispatches tool calls in PARALLEL via a queue (lines 1231-1273). The plan write-gate runs inside _execute_tool_call per-call so it's still correct, but _record_dispatched_tool appends to stats.turns[-1] assuming the TurnRecord for THIS turn is the most recent — under concurrency multiple tools append to the same (correct) last turn, which matches fork intent. Verify ordering: _update_stats (creates TurnRecord in _chat) runs before any tool dispatch in the same turn, so stats.turns[-1] is valid.",
+        "mutates_state must be re-applied to EVERY v2.13 builtin individually; if a new v2.13 builtin (or a renamed one) is missed it defaults to True (from BaseTool) and gets blocked in plan mode, or defaults wrong if a read-only tool isn't overridden — silent plan-mode breakage. Audit the full v2.13 builtins/ list, not just the 2.9.6 set.",
+        "request_fork_to_dev_callback added to InvokeContext is consumed by exit_plan_mode tool; verify v2.13's exit_plan_mode.py (which exists natively) actually calls switch_agent_callback today and decide whether to rewire it to request_fork_to_dev or keep both. Fork's _handle_session_plan_events still exists in v2.13 (line 972) — the software-driven _maybe_prompt_plan_confirmation path can race/duplicate with the tool-driven exit_plan_mode path; preserve fork's guard ordering.",
+        "pre_plan_profile on AgentManager: must hook into v2.13 switch_profile to stash the outgoing profile when entering PLAN. v2.13 manager refactored available_agents/get_agent — confirm switch_profile signature before adding the stash; the 'request approval for edits' branch in _maybe_prompt_plan_confirmation reads it.",
+        "acp_agent_loop.py is 69KB and may have refactored the prompt entrypoint between 2.9.6 and 2.13; the fork-reentry wrapper anchor (class VibeAcpAgentLoop ~line 928) may have moved — grep the act() call site rather than trusting the line number.",
+        "MicroCompactMiddleware mutates stats.context_tokens in-place so AutoCompactMiddleware (next in pipeline) sees the reduced count — ordering in _setup_middleware is load-bearing: MicroCompact MUST be added immediately before AutoCompact. Also confirms config.micro_compact_ratio/micro_keep_last defaults are sane in v2.13."
+      ],
+      "estimated_loc": 760,
+      "confidence": "high",
+      "_key": "agent-loop-hooks"
+    },
+    {
+      "feature": "plan-mode redesign (P5): fork-to-dev exit semantics + hard mutates_state dispatch gate + sparse plan reminders + /plan toggle command + enter_plan_mode tool, layered ON TOP of v2.13's native plan_session/PlanReview model",
+      "difficulty": "red",
+      "phase": "P5",
+      "fork_files": [
+        {
+          "path": "vibe/core/tools/builtins/enter_plan_mode.py",
+          "role": "NEW file in fork (absent in 2.9.6 and in v2.13). LLM-callable tool that prompts the user via AskUserQuestion then flips active profile to PLAN via switch_agent_callback. permission=ALWAYS, mutates_state=False. Lets the model self-enter plan mode mid-conversation."
+        },
+        {
+          "path": "vibe/core/tools/builtins/exit_plan_mode.py",
+          "role": "Fork REWROTE the run() body. Instead of switching profile in-place (v2.13 native behavior), it reads/validates the plan file (with _find_recent_plan_file fallback + empty-file guard), then calls ctx.request_fork_to_dev_callback(plan_content, plan_path, target_profile) to stage a context-wipe fork. target_profile = ACCEPT_EDITS or agent_manager.pre_plan_profile (stashed). Adds mutates_state=False."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "role": "HEAVIEST change (+546 lines), NOT in task's named list but the engine of the feature. Adds: _PLAN_GATE_BYPASS_TOOLS frozenset; the mutates_state dispatch gate (~line 1224-1278) that hard-blocks mutating tools in PLAN with carve-outs (write_file/search_replace->plan-path allowlist via resolve_permission ALWAYS, bash->read-only allowlist, task->SAFE subagents); request_fork_to_dev / pending_fork_to_dev / fork_to_dev() (clear_history->switch_agent->return seed); plan_session rotation on leave-PLAN; sparse reminder wiring; _plan_modified_in_turn tracking; InvokeContext now passes request_fork_to_dev_callback."
+        },
+        {
+          "path": "vibe/core/middleware.py",
+          "role": "Adds make_plan_agent_sparse_reminder() and extends ReadOnlyAgentMiddleware with sparse_reminder + sparse_every_n_turns (default 5): periodic short reminder injected while PLAN stays active so the model doesn't drift into edits over long planning turns. Also extends make_plan_agent_reminder text to push parallel read-only task subagents."
+        },
+        {
+          "path": "vibe/core/system_prompt.py",
+          "role": "Adds _resolve_output_style_section() (output-style prepend) -- this is NOT plan-mode; it is the output-style/system-prompt feature that happens to share this file. Do NOT bundle it into the plan-mode port; track under the output-style feature."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "Plan UI wiring: the while-True act() loop that consumes pending_fork_to_dev and calls _handle_pending_fork() (wipes messages_area, mounts marker + seed UserMessage at message_index=1, _on_profile_changed); _toggle_plan_mode() handler for /plan (toggle into PLAN / restore pre_plan_profile); PlanModeIndicator chip widget + set_active calls; switch_agent_generation guard."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "role": "Registers the 'plan' Command(aliases={'/plan'}, handler='_toggle_plan_mode'). In v2.13 commands.py is refactored into a CommandRegistry with _build_commands() dict + CommandAvailabilityContext -- the entry must be added inside _build_commands()."
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/plan_mode_indicator.py",
+          "role": "NEW fork widget (the [PLAN] status chip). Referenced by app.py import. Must be ported as a new file; verify it doesn't collide with v2.13's native PlanFileMessage widget (different purpose)."
+        },
+        {
+          "path": "vibe/core/agents/manager.py",
+          "role": "Fork added _pre_plan_profile stash + pre_plan_profile property + switch_profile() PLAN-entry/exit stash logic. v2.13's switch_profile is a bare one-liner (manager.py:93-94) with NO stash -- this must be re-added."
+        },
+        {
+          "path": "vibe/core/tools/base.py",
+          "role": "Fork added request_fork_to_dev_callback: Callable[[str,Path,str],None] field to InvokeContext. v2.13 InvokeContext (base.py:44-58) lacks it (but already has plan_file_path + switch_agent_callback, and gained permission_store)."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/agents/models.py",
+          "anchor": "_plan_overrides() (lines 100-107) + PLAN AgentProfile (117-123)",
+          "upstream_change": "v2.13 makes PLAN read-only NATIVELY via permission overrides: write_file/search_replace permission='never' with allowlist=[PLANS_DIR/*]. PLAN safety=SAFE. This is profile/permission-based, NOT a hard mutates_state gate -- bash, task-to-unsafe-subagents, and MCP tools are NOT hard-blocked here. Our dispatch gate must layer on top to cover those."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_handle_session_plan_events() (972-981), _handle_plan_review_ended() (953-970), _plan_session=PlanSession() (286), InvokeContext construction (1141-1154)",
+          "upstream_change": "v2.13 has a FULL native plan flow we never had: on exit_plan_mode ToolCallEvent it snapshots the plan file and emits PlanReviewRequestedEvent; on ToolResultEvent it diffs the file and re-injects manual user edits, emitting PlanReviewEndedEvent. REVIEW-IN-PLACE model. Our fork-to-dev model bypasses review (it wipes context). Must decide: keep native review for the in-place path, or intercept before PlanReviewRequested when fork-to-dev is staged."
+        },
+        {
+          "path": "vibe/core/tools/builtins/exit_plan_mode.py",
+          "anchor": "ExitPlanMode.run() (62-137), switch_agent_callback / agent_manager.switch_profile branches",
+          "upstream_change": "v2.13 native exit_plan_mode switches profile IN-PLACE to ACCEPT_EDITS or DEFAULT via switch_agent_callback and leaves the conversation intact. Our fork replaces this with request_fork_to_dev_callback. v2.13 also adds footer_note 'Plan: <path> (Ctrl+G to edit)' and is disabled in non-PLAN profiles via base_disabled (models.py). The tool result deliberately does NOT include plan content (test_result_does_not_include_plan_content)."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "ReadOnlyAgentMiddleware registration (755-768) + switch_agent() (1755-1759) + reload_with_initial_messages()",
+          "upstream_change": "v2.13 registers ReadOnlyAgentMiddleware for PLAN with make_plan_agent_reminder(plan_file_path_str, has_ask_user_question, has_exit_plan_mode) but NO sparse reminder. switch_agent() does switch_profile + reload_with_initial_messages(reset_middleware=False). Our sparse-reminder + plan_session rotation hooks attach here."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "the act() turn driver around lines 1449-1467 (single aclosing(agent_loop.act(...)) call, no while loop); action_cycle_mode()/_cycle_agent() (2836-2909); _build_command_registry() (480)",
+          "upstream_change": "v2.13's turn driver is a single act() call -- NOT a loop. Our fork-to-dev needs to wrap it in while-True and consume pending_fork_to_dev. v2.13 enters PLAN only via shift+tab cycle (DEFAULT->PLAN->ACCEPT_EDITS->AUTO_APPROVE per get_agent_order); there is NO /plan command -- our _toggle_plan_mode + commands.py entry are additive. switch_agent_generation guard already exists in v2.13's _cycle_agent."
+        },
+        {
+          "path": "vibe/cli/textual_ui/handlers/event_handler.py",
+          "anchor": "PlanReviewRequestedEvent/PlanReviewEndedEvent cases (128-131), _handle_start_plan_review/_handle_stop_plan_review (258-269), plan_file_message + PlanFileMessage",
+          "upstream_change": "v2.13 has a native PlanFileMessage widget (live-watched plan file, Ctrl+G open_in_editor via app.action_open_plan_in_editor at 3210-3215). This is the review UI. Our PlanModeIndicator chip is a different widget and can coexist; but if we keep fork-to-dev, the PlanReviewRequested mount may need suppression on the wipe path."
+        },
+        {
+          "path": "vibe/core/agents/manager.py",
+          "anchor": "switch_profile() (93-94)",
+          "upstream_change": "Reduced to a 2-line method with no pre_plan_profile concept. Our stash logic (and pre_plan_profile property used by exit_plan_mode + _toggle_plan_mode) must be re-grafted here."
+        },
+        {
+          "path": "vibe/core/tools/base.py",
+          "anchor": "InvokeContext dataclass (44-58)",
+          "upstream_change": "Gained permission_store field; still has plan_file_path + switch_agent_callback. Missing request_fork_to_dev_callback -- add it. SwitchAgentCallback type already imported from vibe.core.types in TYPE_CHECKING block."
+        }
+      ],
+      "upstream_native_replacements": [
+        "vibe/core/plan_session.py -- v2.13 ships PlanSession (timestamped <ts>-<slug>.md path under PLANS_DIR, read(), snapshot_content_hash(), has_content_changed()). Our fork added the same class; DELETE the fork's copy and use upstream's. The fork's _find_recent_plan_file fallback in exit_plan_mode may be droppable since upstream PlanSession owns the canonical path (keep only if drift is still observed).",
+        "PLAN read-only enforcement for write_file/search_replace -- v2.13 _plan_overrides() does this natively via permission='never' + allowlist=[PLANS_DIR/*]. We can DELETE the write_file/search_replace branch of the _PLAN_GATE_BYPASS_TOOLS gate IF we accept permission-based enforcement for those two tools, keeping our gate only for bash/task/mcp which upstream does NOT hard-block.",
+        "exit_plan_mode tool scaffolding (BaseTool subclass, AskUserQuestion confirmation, ALWAYS permission, display formatters) -- v2.13 already ships exit_plan_mode.py; port only our run()-body delta (fork-to-dev) onto upstream's file, do not re-create the class.",
+        "exit_plan_mode auto-disable outside PLAN -- v2.13 disables exit_plan_mode via base_disabled in DEFAULT/ACCEPT_EDITS/AUTO_APPROVE/LEAN profiles; our tool's 'can only be used in plan mode' runtime guard is now belt-and-suspenders (keep guard, registration-level disable is free).",
+        "PlanReviewRequestedEvent/PlanReviewEndedEvent + PlanFileMessage live-edit UI + Ctrl+G open-in-editor -- entirely native in v2.13; we never had these. We gain plan-file live review for FREE on the in-place path.",
+        "next_agent cycle ordering incl. PLAN (get_agent_order DEFAULT->PLAN->ACCEPT_EDITS->AUTO_APPROVE) -- native; our shift+tab plan cycling no longer needs custom ordering.",
+        "switch_agent_generation guard in app.py -- already present natively in v2.13 _cycle_agent (lines 2887-2901); do not re-add, reuse it for _toggle_plan_mode."
+      ],
+      "port_steps": [
+        "STEP 0 (DECISION GATE): Choose layering. RECOMMENDED hybrid -- keep upstream's native PLAN read-only (permission-based) + native PlanReview UI, and layer ON TOP only: (a) our hard mutates_state dispatch gate scoped to bash/task/mcp (NOT write_file/search_replace, which upstream covers), (b) fork-to-dev exit semantics replacing native in-place switch, (c) sparse reminders, (d) /plan toggle command + enter_plan_mode tool + PlanModeIndicator. Document that fork-to-dev REPLACES native PlanReview-then-implement-in-place; reconcile the PlanReviewRequested mount on the wipe path.",
+        "STEP 1: vibe/core/tools/base.py -- add request_fork_to_dev_callback: Callable[[str, Path, str], None] | None field to InvokeContext (after switch_agent_callback). Keep upstream permission_store field.",
+        "STEP 2: vibe/core/agents/manager.py -- re-graft _pre_plan_profile init, pre_plan_profile property, and PLAN-entry/exit stash logic into switch_profile(). Ensure reload_from_disk (if present in v2.13) handles a stale stash defensively as the fork notes.",
+        "STEP 3: vibe/core/agent_loop.py -- (a) add _PLAN_GATE_BYPASS_TOOLS but TRIM write_file/search_replace out (upstream perms handle them) leaving bash + task carve-outs; re-implement the mutates_state dispatch gate at the v2.13 tool-execution site (equivalent of fork line ~1224, just before _should_execute_tool). (b) add request_fork_to_dev / pending_fork_to_dev / fork_to_dev() (clear_history->switch_agent->seed). (c) pass request_fork_to_dev_callback=self.request_fork_to_dev into the InvokeContext at 1141-1154. (d) add plan_session rotation on leave-PLAN inside switch_agent and clear_history. (e) port _plan_modified_in_turn tracking. (f) reconcile _handle_session_plan_events: when fork-to-dev is staged, suppress/short-circuit the PlanReviewRequestedEvent so the wipe path doesn't also mount a live PlanFileMessage.",
+        "STEP 4: vibe/core/tools/builtins/exit_plan_mode.py -- port the fork run()-body delta onto upstream's class: plan-file read/validate (+ optional _find_recent_plan_file fallback + empty guard), target_profile resolution (ACCEPT_EDITS vs pre_plan_profile with availability defensive check), and request_fork_to_dev_callback call. Keep upstream's footer_note 'Ctrl+G to edit' and the three-choice question. Add mutates_state=False.",
+        "STEP 5: vibe/core/middleware.py -- add make_plan_agent_sparse_reminder() and extend ReadOnlyAgentMiddleware with sparse_reminder/sparse_every_n_turns + _turns_since_reminder, resetting on transitions. Update the PLAN ReadOnlyAgentMiddleware registration in agent_loop.py (~755) to pass sparse_reminder + sparse_every_n_turns=5. Also port the parallel-task-subagent text into make_plan_agent_reminder.",
+        "STEP 6: vibe/core/tools/builtins/enter_plan_mode.py -- add as NEW file (from fork, adjust imports for any v2.13 moves). Register it in v2.13's builtin tool registry next to exit_plan_mode. It should be ENABLED outside PLAN and disabled IN plan -- inverse of exit_plan_mode's base_disabled treatment.",
+        "STEP 7: vibe/cli/commands.py -- add 'plan' Command(aliases=frozenset(['/plan']), description=..., handler='_toggle_plan_mode') inside CommandRegistry._build_commands().",
+        "STEP 8: vibe/cli/textual_ui/widgets/plan_mode_indicator.py -- port NEW widget file; verify no name/CSS/DOM-id collision with native PlanFileMessage.",
+        "STEP 9: vibe/cli/textual_ui/app.py -- (a) wrap the single act() call (~1462-1467) in a while-True loop that, after _handle_agent_loop_events, checks agent_loop.pending_fork_to_dev and calls _handle_pending_fork(); guard auto_title/at-mention telemetry to the initial iteration only (is_initial_turn). (b) port _handle_pending_fork() (UI wipe, fork_to_dev, mount marker + seed UserMessage at message_index=1, _on_profile_changed). (c) port _toggle_plan_mode(). (d) mount PlanModeIndicator and wire set_active in _on_profile_changed/startup. (e) reuse the existing switch_agent_generation guard.",
+        "STEP 10: Run migrated tests; iterate until green. Manually verify shift+tab still cycles into PLAN, /plan toggles, write tools blocked, exit_plan_mode forks to a clean implementation context, and sparse reminder fires after N turns."
+      ],
+      "tests_to_migrate": [
+        "tests/test_agent_plan_mode_dispatch.py -- MIGRATE (core value). TestPlanModeDispatchGate (write blocked, read allowed, write-to-plan-path allowed, bash read-only allowed/blocked, task-to-SAFE allowed/non-SAFE blocked, error wrapped in TOOL_ERROR_TAG) + TestForkToDev (fork clears history/switches/returns seed, no-pending raises, rotates plan_session, plan_session rotates on cancel toggle-out, unchanged when not leaving PLAN, clears pending before mutation). NOTE: write_file/search_replace gate tests may need rework if Step 0 trims those from the gate (they would then assert permission-based blocking instead).",
+        "tests/core/tools/builtins/test_exit_plan_mode.py (fork) -- MERGE into v2.13's tests/tools/test_exit_plan_mode.py (note path move from tests/core/tools/builtins/ to tests/tools/). Replace fork in-place-switch assertions where they now route through request_fork_to_dev_callback; KEEP fork-specific tests (fallback file discovery, empty-plan guard, target=pre_plan_profile). Reconcile with upstream test_yes_uses_switch_agent_callback / test_result_does_not_include_plan_content.",
+        "tests/core/tools/builtins/test_enter_plan_mode.py -- MIGRATE wholesale to tests/tools/test_enter_plan_mode.py (new tool, no upstream coverage).",
+        "tests/cli/test_plan_command.py -- MIGRATE; adapt to v2.13 CommandRegistry (registry.has_command / _build_commands) and the while-loop act() driver.",
+        "tests/test_middleware.py -- MERGE: add sparse-reminder cases (sparse fires after N turns, resets on transition) onto v2.13's existing test_middleware.py which already exercises ReadOnlyAgentMiddleware. MEMORY notes a prior sparse-reminder/prepend-ack test alignment -- re-check that interaction.",
+        "tests/test_system_prompt.py -- DROP from P5: it corresponds to _resolve_output_style_section (output-style feature), not plan-mode. Migrate under the output-style port instead.",
+        "tests/core/test_plan_session.py (v2.13) + tests/test_agents.py (v2.13) -- upstream-owned; do NOT migrate fork copies of PlanSession tests, rely on these since we delete the fork PlanSession."
+      ],
+      "risks": [
+        "SEMANTIC COLLISION (highest risk): v2.13's native plan is REVIEW-IN-PLACE (exit_plan_mode -> switch profile in place, plan file live-reviewed via PlanReviewRequested/PlanFileMessage, manual edits re-injected). Our fork is WIPE-AND-FORK (clear_history -> switch -> reseed). Mutually exclusive end-states. If we keep fork-to-dev, PlanReviewRequestedEvent still fires (emitted on the exit_plan_mode ToolCallEvent BEFORE the result), mounting a PlanFileMessage we then wipe -- must suppress or sequence or the UI flickers/leaks a file watcher.",
+        "DOUBLE READ-ONLY ENFORCEMENT: upstream blocks write_file/search_replace via permission='never'+allowlist; our gate also blocks via mutates_state. Allowlist semantics differ (upstream PLANS_DIR/* glob vs our resolve_permission ALWAYS check). Risk our gate blocks a plan-path write the permission layer would allow. Resolution in Step 0: trim write_file/search_replace from our gate.",
+        "exit_plan_mode/enter_plan_mode base_disabled inversion: after fork-to-dev switches to ACCEPT_EDITS/DEFAULT, exit_plan_mode is correctly gone (base_disabled). But enter_plan_mode must be the inverse (enabled outside PLAN, disabled in PLAN) or the model can loop entering/exiting.",
+        "switch_agent + reload_with_initial_messages(reset_middleware=False): fork_to_dev calls switch_agent which reloads tool/skill managers + system prompt in v2.13. plan_session rotation must occur at the correct point or the just-approved plan file could be overwritten by a later /plan.",
+        "app.py act() loop refactor: v2.13's single act() carries auto_title + at-mention telemetry in the same try. Wrapping in while-True must not re-fire auto_title/telemetry on the seed iteration (is_initial_turn guard) -- else duplicate session titles or mention telemetry.",
+        "message_index alignment: fork mounts seed UserMessage at message_index=1 assuming clear_history left [system] at index 0. v2.13 windowing (_tool_call_map, backfill, history_windowing) is more elaborate; index assumptions may break rewind/windowing.",
+        "commands.py CommandRegistry: handler is a string method resolved via getattr; ensure _toggle_plan_mode exists on VibeApp and is_available is None so /plan is always available.",
+        "PlanModeIndicator vs native PlanFileMessage: two plan-related widgets; verify CSS ids / DOM query selectors do not clash.",
+        "system_prompt.py is a red herring for P5 (output-style, not plan-mode); bundling it risks scope creep.",
+        "MEMORY caution: prior work aligned a sparse-reminder/prepend-ack middleware test; re-introducing sparse logic may resurface it. v2.13 pipeline adds AutoCompactMiddleware + ContextWarningMiddleware BEFORE ReadOnlyAgentMiddleware (agent_loop ~751-768) -- verify ordering/turn-counting interaction."
+      ],
+      "estimated_loc": 650,
+      "confidence": "high",
+      "_key": "plan-mode"
+    },
+    {
+      "feature": "microcompact — non-LLM, in-place clearing of old tool-result message bodies to delay/avoid full auto-compaction",
+      "difficulty": "yellow",
+      "phase": "P5",
+      "fork_files": [
+        {
+          "path": "vibe/core/compact/micro.py",
+          "role": "Core feature: micro_compact() function (greedy clears oldest/largest clearable tool results down to 50% water mark, protects last N per tool) + MicroCompactMiddleware (before_turn hook that runs micro_compact when context_tokens >= threshold*ratio). Defines CLEARABLE_TOOLS frozenset and _CLEARED_MARKER sentinel. NEW module, not derived from any v2.9.6 file."
+        },
+        {
+          "path": "vibe/core/compact/__init__.py",
+          "role": "Re-exports CLEARABLE_TOOLS, MicroCompactMiddleware, micro_compact. NEW file."
+        },
+        {
+          "path": "tests/core/compact/test_micro.py",
+          "role": "9 unit tests covering below-threshold no-op, clearing oldest, keep-last-N protection, keep_last=0 edge case (slicing quirk guard), skip-already-cleared, skip-non-clearable, stats update, greedy-largest-first ordering, CLEARABLE_TOOLS membership. NEW file."
+        },
+        {
+          "path": "tests/core/compact/__init__.py",
+          "role": "Empty package marker. NEW file."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "role": "Wiring: import MicroCompactMiddleware (line 26); register it FIRST in _setup_middleware() so it runs before AutoCompactMiddleware in the same before_turn pass (line 857: middleware_pipeline.add(MicroCompactMiddleware()))."
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "role": "Adds config fields micro_compact_ratio: float = 0.7 and micro_keep_last: int = 2 (after auto_compact_threshold)."
+        },
+        {
+          "path": "vibe/core/types.py",
+          "role": "Adds AgentStats.cleared_tool_results: int = 0 counter (after context_tokens)."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "Manual trigger: '/compact --micro' branch in the compact command handler. Imports micro_compact (line 136); bails if threshold<=0; calls micro_compact() directly; shows CompactMessage via set_complete(old_tokens=, new_tokens=)."
+        },
+        {
+          "path": "vibe/core/skills/builtins/vibe.py",
+          "role": "Config doc lines (77-78) documenting micro_compact_ratio and micro_keep_last in the generated vibe.toml builtin skill."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/compaction.py",
+          "anchor": "module-level (new home of compact module; only collect_prior_user_messages here)",
+          "upstream_change": "v2.9.6's compact logic was extracted/moved. v2.13 has NO compact/ package — it's a single vibe/core/compaction.py with only collect_prior_user_messages(). The fork's vibe/core/compact/ package does not exist upstream and lands cleanly as a new module (recommend renaming to avoid confusion: create vibe/core/microcompact.py rather than re-creating the compact/ package, OR keep compact/ package alongside compaction.py)."
+        },
+        {
+          "path": "vibe/core/middleware.py",
+          "anchor": "ConversationContext (L28-33), MiddlewareResult (L35-40), ResetReason (L23-26), AutoCompactMiddleware (L100-115), MiddlewarePipeline.run_before_turn (L252)",
+          "upstream_change": "Middleware API is fully compatible: ConversationContext has messages/stats/config; MiddlewareResult/ResetReason unchanged; before_turn/reset Protocol unchanged. AutoCompactMiddleware still reads context.stats.context_tokens vs threshold and returns COMPACT. MicroCompactMiddleware's contract (mutate context.stats.context_tokens downward so the AutoCompactMiddleware later in the same pass sees the reduced count) STILL HOLDS — run_before_turn iterates middlewares in order and AutoCompactMiddleware re-reads context.stats fresh."
+        },
+        {
+          "path": "vibe/core/agent_loop.py",
+          "anchor": "_setup_middleware() L738-776; insertion point is immediately before 'self.middleware_pipeline.add(AutoCompactMiddleware())' at L751",
+          "upstream_change": "Pipeline order grew (TurnLimit, PriceLimit, TokenLimit, AutoCompact, ContextWarning, two ReadOnlyAgentMiddleware). Insert MicroCompactMiddleware() on the line directly before AutoCompactMiddleware (new L751) to preserve the 'micro runs, then auto re-checks' invariant. NOTE: fork's L855 had no TokenLimitMiddleware — v2.13 added it; insert micro AFTER TokenLimit, BEFORE AutoCompact."
+        },
+        {
+          "path": "vibe/core/types.py",
+          "anchor": "AgentStats class L47-68 (add cleared_tool_results after context_tokens L56); MessageList L478-555 (silent() L527, __getitem__ returns live mutable LLMMessage L544); Role.tool L211; LLMMessage.name L230",
+          "upstream_change": "MessageList.silent() exists and behaves as the fork comment assumes. __getitem__ returns the live LLMMessage (mutating .content in place works, no copy). reset() never notifies. v2.13 compact() at agent_loop L1725 uses messages.reset([...]) NOT append-based replacement, so the fork's defensive silent() comment is still accurate (observer only fires on append/extend). Role.tool and LLMMessage.name both present."
+        },
+        {
+          "path": "vibe/core/config/_settings.py",
+          "anchor": "VibeConfig settings block; insert micro_compact_ratio/micro_keep_last right after auto_compact_threshold (now at L526)",
+          "upstream_change": "compaction_prompt_id: str = 'compact' added at L516 (orthogonal to microcompact — see native-replacements). auto_compact_threshold moved to L526. Field additions land cleanly."
+        },
+        {
+          "path": "vibe/cli/textual_ui/widgets/compact.py",
+          "anchor": "CompactMessage.set_complete() L33-39",
+          "upstream_change": "BREAKING SIGNATURE CHANGE: v2.13 set_complete(*, old_session_id, new_session_id) — the fork's '/compact --micro' branch calls set_complete(old_tokens=, new_tokens=). Token-based display was replaced with session-id-based display (compact_complete_display). The manual --micro branch must be rewritten: micro-compact does NOT create a new session, so a CompactMessage with session ids is semantically wrong. Use a plain status/info message reporting tokens freed instead, or extend CompactMessage."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_compact_history() L2164 and _run_compact() L2195 (the /compact command handler)",
+          "upstream_change": "Compact handler was refactored to async-task model: _compact_history spawns asyncio.create_task(_run_compact(...)) which calls agent_loop.compact(extra_instructions=). The fork's inline '--micro' branch (which lived inside the old synchronous handler at fork app.py ~L2386) must be re-grafted at the TOP of _compact_history, before the async task is spawned, branching on '--micro' in cmd_args.split()."
+        },
+        {
+          "path": "vibe/core/skills/builtins/vibe.py",
+          "anchor": "config doc block around L77 (compaction_prompt_id line)",
+          "upstream_change": "Builtin vibe.toml doc gained compaction_prompt_id and auto_compact threshold docs. Add the two micro_compact_ratio/micro_keep_last comment lines in the same Behavior section."
+        }
+      ],
+      "upstream_native_replacements": [
+        "NONE. compaction_prompt_id (config/_settings.py L516, resolved via compaction_prompt property L724) only customizes the TEXT of the full-compaction summary prompt — it is read by agent_loop.compact() L1697 as summary_request and sent to the LLM. It does not clear tool results and does not run before each turn.",
+        "NONE. v2.13 injected-style summaries (collect_prior_user_messages in compaction.py + injected=True summary_message at agent_loop.py L1722-1725) are part of FULL LLM-based compaction: they rebuild the message list as [system, prior_user_msgs, summary] after a summarization LLM call and reset the session. This is the heavyweight path microcompact is specifically designed to AVOID/DELAY. They are complementary, not a replacement.",
+        "Confirmed by reading: microcompact's distinguishing properties — (a) no LLM call, (b) no session reset, (c) in-place .content overwrite preserving message structure/tool_call_id, (d) runs every turn as gated middleware — have NO native equivalent in v2.13. The entire feature must be re-implemented.",
+        "Minor: the fork's CLEARABLE_TOOLS names all still match v2.13 tool registry (Bash→bash, ReadFile→read_file, WriteFile→write_file, SearchReplace→search_replace, Grep→grep, WebFetch→web_fetch, WebSearch→web_search via BaseTool.get_name() CamelCase→snake_case at base.py L338). No name-drift fixes needed."
+      ],
+      "port_steps": [
+        "1. Create vibe/core/microcompact.py (recommend this name over re-creating the compact/ package, since v2.13 already owns vibe/core/compaction.py and a sibling compact/ package would be confusing). Copy micro_compact() and MicroCompactMiddleware verbatim from fork vibe/core/compact/micro.py. Imports resolve unchanged: ConversationContext/MiddlewareResult/ResetReason from vibe.core.middleware; AgentStats/MessageList/Role from vibe.core.types. Re-verify the silent()/__getitem__ comment text still matches v2.13 behavior (it does).",
+        "2. vibe/core/types.py: add `cleared_tool_results: int = 0` to AgentStats after `context_tokens: int = 0` (L56).",
+        "3. vibe/core/config/_settings.py: add `micro_compact_ratio: float = 0.7` and `micro_keep_last: int = 2` after auto_compact_threshold (L526).",
+        "4. vibe/core/agent_loop.py: add `from vibe.core.microcompact import MicroCompactMiddleware` near the compaction import (L25); in _setup_middleware() insert `self.middleware_pipeline.add(MicroCompactMiddleware())` on the line immediately BEFORE `self.middleware_pipeline.add(AutoCompactMiddleware())` (new L751). Keep it after TokenLimitMiddleware.",
+        "5. vibe/cli/textual_ui/app.py: import micro_compact from vibe.core.microcompact; re-graft the '--micro' branch at the TOP of _compact_history() (L2164), before the async task spawn: if '--micro' in cmd_args.split(): bail if threshold<=0, call micro_compact() directly, then report tokens freed. DO NOT call CompactMessage.set_complete(old_tokens=, new_tokens=) — that signature is gone. Instead emit a StatusMessage/info line ('Micro-compacted: N tokens freed') or extend CompactMessage with a token-display mode. Then `return` before reaching the full-compact task path.",
+        "6. vibe/core/skills/builtins/vibe.py: add the two doc comment lines for micro_compact_ratio/micro_keep_last in the Behavior section near compaction_prompt_id (L77).",
+        "7. Create tests/core/microcompact/ (or tests/core/) with __init__.py and test_micro.py; fix the import from `vibe.core.compact.micro` to `vibe.core.microcompact`. The rest of the tests are framework-agnostic (build MessageList/LLMMessage/AgentStats directly) and pass unchanged on v2.13's compatible types.",
+        "8. Run the microcompact tests plus tests/core/test_compaction.py and tests/test_agent_auto_compact.py to confirm microcompact does not regress v2.13's native full-compaction path."
+      ],
+      "tests_to_migrate": [
+        "tests/core/compact/test_micro.py → port to tests/core/microcompact/test_micro.py (or tests/core/test_microcompact.py). Only change needed: the import line `from vibe.core.compact.micro import ...` becomes `from vibe.core.microcompact import ...`. All 9 tests (below-threshold no-op x2, clears-old-bash, keep-last-N, keep_last=0 edge, skip-already-cleared, skip-non-clearable, updates-stats, greedy-largest-first, CLEARABLE_TOOLS membership) rely only on stable types and remain valid.",
+        "tests/core/compact/__init__.py → recreate as package marker for the new test dir.",
+        "ADD a small integration test: assert MicroCompactMiddleware is registered before AutoCompactMiddleware in agent_loop._setup_middleware() and that a manual '/compact --micro' path works under v2.13's async _compact_history (guards against the set_complete signature regression)."
+      ],
+      "risks": [
+        "HIGH: CompactMessage.set_complete() signature changed from (old_tokens, new_tokens) to (*, old_session_id, new_session_id). The fork's '/compact --micro' UI branch will raise TypeError if copied verbatim. Must rewrite the UI feedback (micro-compact creates no new session, so session-id display is also semantically wrong).",
+        "MEDIUM: app.py compact handler was refactored from synchronous-inline to asyncio.create_task(_run_compact(...)). The '--micro' branch must be re-grafted at the top of _compact_history() and must `return` before the task spawn; mis-placement could double-run or run full compaction after a micro pass.",
+        "MEDIUM: Middleware ordering invariant. microcompact mutates context.stats.context_tokens downward so the SAME before_turn pass's AutoCompactMiddleware sees the reduced value and skips full compaction. v2.13's run_before_turn (middleware.py L252) iterates in registration order and AutoCompactMiddleware re-reads context.stats live, so the invariant holds — but ONLY if MicroCompactMiddleware is added strictly before AutoCompactMiddleware. A future reorder silently breaks the feature with no test failure unless the ordering test (step 7/add) exists.",
+        "LOW: stats.context_tokens mutation is ephemeral — v2.13 still overwrites it from LLMUsage.input_tokens on the next response (_update_stats). Verify _update_stats wholesale-overwrites context_tokens (not increments); the fork comment assumes overwrite. If v2.13 changed to incremental accounting, the reclaimed delta would be lost. (Reading confirms compact() sets context_tokens=0 and relies on next turn recompute, consistent with overwrite semantics.)",
+        "LOW: Naming collision risk if you re-create the compact/ package next to v2.13's compaction.py. Strongly prefer a single vibe/core/microcompact.py module to avoid `from vibe.core.compaction import ...` vs `from vibe.core.compact import ...` confusion for future maintainers.",
+        "LOW: micro_keep_last=0 slicing quirk (indices[-0:] returns whole list) is already guarded in fork code and covered by test_micro_keep_last_zero_clears_everything_eligible; preserve the guard verbatim."
+      ],
+      "estimated_loc": 170,
+      "confidence": "high",
+      "_key": "microcompact"
+    },
+    {
+      "feature": "app-commands-wiring (cross)",
+      "difficulty": "red",
+      "phase": "P3/P5 (UI shell P3, plan+fork P5)",
+      "fork_files": [
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "role": "Primary change surface: +451 lines adding 4 commands (/agents, /stat, /plan, /style), 2 new BottomApp enum values, PlanModeIndicator chip in compose/on_mount, fork-to-dev while-loop in _handle_agent_loop_turn, _handle_pending_fork(), stop_stream fix in history restore, _toggle_plan_mode(), _show_stat(), _show_agents(), _set_output_style(), _switch_to_agents_picker_app(), _switch_to_stat_timeline_app(), on_agents_picker_app_cancelled/edit_requested/view_full_requested, on_stat_timeline_app_cancelled, _handle_agents_picker_app_escape(), _handle_stat_timeline_app_escape(), plus _on_profile_changed() updated to refresh PlanModeIndicator, and _cycle_agent completion path updated to call _on_profile_changed instead of _refresh_banner"
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "role": "+29 lines: 4 new Command entries (agents, plan, stat renamed from status, style); status alias folded into stat"
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "class BottomApp(StrEnum) — line 216",
+          "upstream_change": "v2.13 adds ThemePicker (new); still missing AgentsPicker and StatTimeline — both must be inserted."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "def compose() — lines 519-522: 'with Horizontal(id=\"bottom-bar\"): yield PathDisplay ... yield ContextProgress()'",
+          "upstream_change": "No PlanModeIndicator widget; must insert 'yield PlanModeIndicator()' between PathDisplay and the NoMarkupStatic spacer."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def on_mount() — lines 524-571",
+          "upstream_change": "v2.13 on_mount does NOT query PlanModeIndicator or set its initial active state; must add query_one + set_active after the existing ContextProgress wiring."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def _handle_agent_loop_turn() — lines 1421-1497",
+          "upstream_change": "v2.13 uses a single aclosing(agent_loop.act()) call with auto_title parameter (new). No while-loop for fork-to-dev. Must wrap in a while True: loop and call _handle_pending_fork() when pending_fork_to_dev is set. Also: the telemetry message_id must be promoted to user_message_id and only assigned to the initial turn."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "_handle_agent_loop_turn — aclosing call site, line 1462",
+          "upstream_change": "v2.13's act() call gains the 'auto_title' kwarg — must be preserved when wrapping in the fork-to-dev while-loop."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "build_history_widgets loop (~line 1316-1318)",
+          "upstream_change": "v2.13 calls write_initial_content() but NOT stop_stream(). Fork adds stop_stream() immediately after — the bug fix must be added here."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def _show_status() — line 1760",
+          "upstream_change": "v2.13 still has the old inline-markdown _show_status. Must be replaced/renamed to _show_stat() with timeline subcommand routing."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "def _on_profile_changed() — line 2846",
+          "upstream_change": "v2.13 calls _refresh_profile_widgets() + _refresh_banner() only. Must also call _plan_indicator.set_active() to reflect PLAN profile transitions."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def _cycle_agent() — call_from_thread(_refresh_banner), line 2903",
+          "upstream_change": "v2.13 calls self.call_from_thread(self._refresh_banner) in the finally block. Must change to self.call_from_thread(self._on_profile_changed) so the PlanModeIndicator is also updated on Shift+Tab cycling."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def _cycle_agent() — uses run_coroutine_threadsafe, line 2892",
+          "upstream_change": "v2.13 uses asyncio.run_coroutine_threadsafe (safer). Fork's _toggle_plan_mode was ported from old asyncio.run pattern — must adopt run_coroutine_threadsafe when writing _toggle_plan_mode for v2.13."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "def _focus_current_bottom_app() — match block, line 2388",
+          "upstream_change": "v2.13 adds ThemePicker case. Must additionally add AgentsPicker and StatTimeline cases."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "def _try_interrupt_bottom_app_escape() — elif chain, line 2713",
+          "upstream_change": "v2.13 has no AgentsPicker or StatTimeline branches. Must insert them alongside existing ModelPicker / ThinkingPicker / SessionPicker branches."
+        },
+        {
+          "path": "vibe/cli/textual_ui/app.py",
+          "anchor": "async def _compact_history() — line 2164",
+          "upstream_change": "v2.13 has no '--micro' branch; _compact_history leads into _run_compact(). Must insert the --micro guard block before the existing agent_running guard."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "anchor": "_build_commands() — 'status' entry at line 110",
+          "upstream_change": "v2.13 still has the old 'status' key with single '/status' alias. Must rename key to 'stat', add '/status' as legacy alias, change handler to '_show_stat', and update description."
+        },
+        {
+          "path": "vibe/cli/commands.py",
+          "anchor": "_build_commands() — after 'compact' entry (line 99)",
+          "upstream_change": "v2.13 has no 'agents', 'plan', or 'style' commands. All three must be inserted: 'agents' before 'help', 'plan' after 'compact', 'style' at end."
+        }
+      ],
+      "upstream_native_replacements": [
+        "vibe/cli/textual_ui/external_editor.py already exists in v2.13 — fork's inline shlex/subprocess/tempfile block in on_agents_picker_app_edit_requested can delegate to ExternalEditor.edit_file() for the editor call and get_editor() for the editor path lookup, replacing the hand-rolled 4-line block",
+        "v2.13 _cycle_agent() now uses run_coroutine_threadsafe pattern for switch_agent — fork's _toggle_plan_mode copied the old asyncio.run() pattern; delete that and reuse the v2.13 run_coroutine_threadsafe template"
+      ],
+      "port_steps": [
+        "1. commands.py: rename 'status' key -> 'stat', add '/status' as second alias, change handler -> '_show_stat', update description. Then insert 'agents' Command (handler '_show_agents'), 'plan' Command (handler '_toggle_plan_mode'), and 'style' Command (handler '_set_output_style').",
+        "2. app.py — BottomApp enum: add AgentsPicker = auto() and StatTimeline = auto() values (matching v2.13 naming convention: class name minus 'App' suffix).",
+        "3. app.py — imports: add AgentsPickerApp, StatOverviewMessage, StatTimelineApp, PlanModeIndicator imports at top; also add BuiltinAgentName import from vibe.core.agents.models and micro_compact from vibe.core.compact.micro; add shlex/subprocess/tempfile to stdlib imports (not needed if delegating to ExternalEditor).",
+        "4. app.py — VibeApp.__init__: add self._plan_indicator: PlanModeIndicator | None = None field.",
+        "5. app.py — compose(): insert 'yield PlanModeIndicator()' inside the bottom-bar Horizontal block, between PathDisplay and the NoMarkupStatic spacer.",
+        "6. app.py — on_mount(): after query_one(ContextProgress), add query_one(PlanModeIndicator) and call set_active(active_profile.name == BuiltinAgentName.PLAN).",
+        "7. app.py — replace _show_status() with _show_stat(cmd_args='', **kwargs): empty arg mounts StatOverviewMessage with max_context from config; 'timeline'/'tl' arg calls _switch_to_stat_timeline_app(); unknown arg mounts ErrorMessage.",
+        "8. app.py — add _switch_to_stat_timeline_app(): guard on BottomApp.StatTimeline, then call _switch_from_input(StatTimelineApp(stats=...)).",
+        "9. app.py — add on_stat_timeline_app_cancelled() and _handle_stat_timeline_app_escape() handlers following the SessionPicker pattern.",
+        "10. app.py — _focus_current_bottom_app() match block: add 'case BottomApp.StatTimeline:' and 'case BottomApp.AgentsPicker:' branches.",
+        "11. app.py — _try_interrupt_bottom_app_escape(): insert elif branches for BottomApp.AgentsPicker (calling _handle_agents_picker_app_escape) and BottomApp.StatTimeline (calling _handle_stat_timeline_app_escape) before the Rewind branch.",
+        "12. app.py — add _show_agents(), _switch_to_agents_picker_app() (sorts profiles by order then alpha, builds prompts dict, calls _switch_from_input(AgentsPickerApp(...))), on_agents_picker_app_cancelled(), on_agents_picker_app_edit_requested() (using ExternalEditor.get_editor()+edit_file() instead of hand-rolled subprocess), on_agents_picker_app_view_full_requested() (pager via subprocess, fallback to UserCommandMessage), and _handle_agents_picker_app_escape().",
+        "13. app.py — add _set_output_style() exactly as in fork (StyleManager, StyleNotFoundError lazy import; list if no arg; validate then VibeConfig.save_updates + agent_loop.refresh_config + refresh_system_prompt).",
+        "14. app.py — add _toggle_plan_mode(): validate no cmd_args, guard on _agent_running, determine currently_in_plan via BuiltinAgentName.PLAN, resolve target (stashed pre_plan_profile or DEFAULT on exit; PLAN on entry), then use run_coroutine_threadsafe pattern from v2.13 _cycle_agent (NOT asyncio.run). Also store loop = asyncio.get_running_loop() before spawning the worker.",
+        "15. app.py — _handle_agent_loop_turn(): promote message_id to user_message_id, wrap the rendered_prompt / narrator / aclosing block in a while-True loop, break when agent_loop.pending_fork_to_dev is None, otherwise call await self._handle_pending_fork() to get current_prompt for the next iteration. Preserve the auto_title kwarg in the act() call.",
+        "16. app.py — add _handle_pending_fork() as a new method: remove loading widget, finalize_streaming, call await agent_loop.fork_to_dev(), reset UI state, clear chat input border, remove+remount messages area with UserCommandMessage + UserMessage(seed), call _on_profile_changed(), return seed.",
+        "17. app.py — build_history_widgets loop: after write_initial_content(), add await widget.stop_stream() (this fixes the restored-message finalization bug).",
+        "18. app.py — _on_profile_changed(): add 'if self._plan_indicator is not None: self._plan_indicator.set_active(active_profile.name == BuiltinAgentName.PLAN)' after existing calls.",
+        "19. app.py — _cycle_agent() finally block: change call_from_thread(self._refresh_banner) to call_from_thread(self._on_profile_changed) so profile+banner+PlanModeIndicator all update on Shift+Tab.",
+        "20. app.py — _compact_history(): insert --micro branch guard at the top of the method (before the existing _agent_running guard) following the fork's pattern, calling micro_compact from vibe.core.compact.micro.",
+        "21. Run full test suite and fix any import or BottomApp match-exhaustiveness errors."
+      ],
+      "tests_to_migrate": [
+        "tests/cli/test_plan_command.py — TestPlanCommandRegistration, TestSlashCommandsNotFilteredByPlanMode, TestToggleHandlerLogic: migrate as-is; no upstream coverage for /plan",
+        "tests/cli/test_show_stat_handler.py — test_show_stat_no_arg_mounts_overview, test_show_stat_timeline_arg_switches_app, test_show_stat_unknown_arg_mounts_error: migrate as-is; v2.13 only has old _show_status",
+        "tests/cli/test_stat_overview.py — migrate as-is (StatOverviewMessage widget absent from v2.13)",
+        "tests/cli/test_stat_timeline.py — migrate as-is (StatTimelineApp widget absent from v2.13)",
+        "tests/cli/test_ui_agents_picker.py — migrate as-is; update ExternalEditor delegation pattern if subprocess calls change",
+        "tests/cli/textual_ui/test_style_command.py — migrate as-is; no output_style concept in v2.13",
+        "tests/cli/test_agent_editor.py — migrate as-is; agent_editor module is custom and absent from v2.13",
+        "tests/cli/test_commands.py — extend v2.13's existing file to cover agents/plan/stat/style registrations; DO NOT replace it, add test cases for the new commands",
+        "tests/cli/test_switching_mode.py — check if plan-mode toggle path is exercised; if fork added cases for _toggle_plan_mode here, migrate those specific cases"
+      ],
+      "risks": [
+        "CRITICAL: _toggle_plan_mode in the fork uses asyncio.run() inside a worker thread but v2.13 changed _cycle_agent to use run_coroutine_threadsafe(coro, loop). Must adopt the v2.13 pattern in _toggle_plan_mode or it will deadlock on the running event loop.",
+        "CRITICAL: pre_plan_profile is a custom field added to AgentManager in the fork (vibe/core/agents/manager.py). It does not exist in v2.13's AgentManager. The port of _toggle_plan_mode depends on this field — must ensure the agents-manager feature port (not this file) lands first or simultaneously.",
+        "v2.13 _handle_agent_loop_turn now passes auto_title= to agent_loop.act(). The fork-to-dev while-loop must pass auto_title=None on subsequent (fork) iterations and only compute it for the initial turn, or it will try to retitle already-titled sessions.",
+        "BottomApp enum uses convention 'class name minus App suffix' — AgentsPickerApp -> AgentsPicker, StatTimelineApp -> StatTimeline must be exact or dynamic lookup via BottomApp[type(w).__name__.removesuffix('App')] breaks.",
+        "_handle_pending_fork calls agent_loop.fork_to_dev() which is a custom fork-side method on AgentLoop. The plan/fork-to-dev feature (P5) must be ported to v2.13 AgentLoop before this wiring is tested.",
+        "output_styles module (vibe/core/output_styles/) is entirely custom — no v2.13 equivalent. _set_output_style lazy-imports StyleManager; if the output-styles feature is not ported first the /style command will ImportError at runtime.",
+        "micro_compact import (vibe/core/compact/micro) is custom. The /compact --micro branch will fail if compact-micro is not ported before this wiring.",
+        "The stop_stream fix in the history-restore loop (step 17) changes observable behavior on session resume: every StreamingMessageBase widget will have its stream finalized on first mount. Verify this does not double-call stop_stream for widgets that the event_handler.finalize_streaming already stopped.",
+        "v2.13 test_commands.py already covers existing commands — extending it rather than replacing it avoids clobbering upstream test coverage."
+      ],
+      "estimated_loc": 420,
+      "confidence": "high",
+      "_key": "app-commands-wiring"
+    },
+    {
+      "feature": "skills-relocation (P6): superpowers skill bundle + custom loader → ~/.agents/skills relocation using v2.13 native loader",
+      "difficulty": "green",
+      "phase": "P6",
+      "fork_files": [
+        {
+          "path": "vibe/core/skills/builtins/__init__.py",
+          "role": "Custom loader entry point: imports load_superpowers_skills() from the bundled superpowers package and merges 14 skills into BUILTIN_SKILLS alongside the native vibe skill. The fork adds 3 lines: the import, an _ALL_SKILLS list, and the re-assignment of BUILTIN_SKILLS."
+        },
+        {
+          "path": "vibe/core/skills/builtins/superpowers/__init__.py",
+          "role": "57-line custom skill loader: walks vibe/core/skills/builtins/superpowers/skills/ at import time, reads each SKILL.md, parses frontmatter via parse_skill_markdown+SkillMetadata.model_validate, and returns a sorted list[SkillInfo]. Failures are logged and skipped. Exposes load_superpowers_skills()."
+        },
+        {
+          "path": "vibe/core/skills/builtins/superpowers/skills/",
+          "role": "14 SKILL.md files (and support assets) vendored from obra/superpowers v5.1.0, translated for mistral-vibe: tool names rewritten (Read→read_file, Bash→bash, Agent→task, etc.), skill names prefixed superpowers- (not superpowers: colon), prose updated for vibe paths. ~7579 lines across 50 files."
+        },
+        {
+          "path": "vibe/core/tools/builtins/skill.py",
+          "role": "One-line fork addition: adds `mutates_state: ClassVar[bool] = False` to the Skill tool class, marking it read-only for plan-mode enforcement. This annotation does not exist in v2.13."
+        },
+        {
+          "path": "scripts/superpowers/01-tool-names.py",
+          "role": "One-shot translation script: rewrites Claude-Code tool names (Skill→skill, Read tool→read_file, EnterPlanMode→enter_plan_mode, etc.) in SKILL.md files sourced from obra/superpowers."
+        },
+        {
+          "path": "scripts/superpowers/02-namespace-and-prose.py",
+          "role": "Round-2 translation script: replaces superpowers:name → superpowers-name colon-to-hyphen, and applies targeted prose patches (executing-plans subagent note, using-git-worktrees EnterWorktree removal, writing-skills path list, using-superpowers How-to-Access rewrite)."
+        }
+      ],
+      "v2_13_anchors": [
+        {
+          "path": "vibe/core/skills/builtins/__init__.py",
+          "anchor": "BUILTIN_SKILLS dict literal (line 6)",
+          "upstream_change": "Unchanged from v2.9.6: still `BUILTIN_SKILLS = {skill.name: skill for skill in [VIBE_SKILL]}`. The fork's custom loader (3-line diff) must be reverted here — leave this file as-is in v2.13."
+        },
+        {
+          "path": "vibe/core/config/harness_files/_harness_manager.py",
+          "anchor": "user_skills_dirs property (lines 97-104)",
+          "upstream_change": "v2.13 added GLOBAL_AGENTS_SKILLS_DIR support: now returns [GLOBAL_SKILLS_DIR.path, GLOBAL_AGENTS_SKILLS_DIR.path] (both ~/.vibe/skills and ~/.agents/skills). Fork's v2.9.6 only returned GLOBAL_SKILLS_DIR (~/.vibe/skills). This is the native replacement for the bundled loader."
+        },
+        {
+          "path": "vibe/core/config/harness_files/_paths.py",
+          "anchor": "GLOBAL_AGENTS_SKILLS_DIR constant (line 9)",
+          "upstream_change": "New in v2.13: `GLOBAL_AGENTS_SKILLS_DIR = GlobalPath(lambda: AGENTS_HOME.path / 'skills')` resolves to ~/.agents/skills. Not present in fork's v2.9.6."
+        },
+        {
+          "path": "vibe/core/paths/_agents_home.py",
+          "anchor": "AGENTS_HOME = GlobalPath(_get_agents_home) pointing to ~/.agents",
+          "upstream_change": "New module in v2.13 (not present in fork v2.9.6). Provides the AGENTS_HOME path abstraction that _paths.py uses for GLOBAL_AGENTS_SKILLS_DIR."
+        },
+        {
+          "path": "vibe/core/skills/manager.py",
+          "anchor": "_compute_search_paths (line 54–72)",
+          "upstream_change": "Identical logic in both versions: extends paths with mgr.user_skills_dirs and mgr.project_skills_dirs. The widened user_skills_dirs in v2.13 naturally picks up ~/.agents/skills without any change to the manager itself."
+        },
+        {
+          "path": "vibe/core/tools/builtins/skill.py",
+          "anchor": "Skill class definition (line 39)",
+          "upstream_change": "v2.13 does NOT have mutates_state — the entire plan-mode mutates_state machinery is a fork addition (part of P5). The `mutates_state: ClassVar[bool] = False` line from the fork must be carried into v2.13 as part of P5 (plan-mode), not P6."
+        }
+      ],
+      "upstream_native_replacements": [
+        "vibe/core/skills/builtins/superpowers/__init__.py (the entire 57-line load_superpowers_skills() loader): v2.13 SkillManager._compute_search_paths() already walks ~/.agents/skills via GLOBAL_AGENTS_SKILLS_DIR; moving the 14 SKILL.md directories to ~/.agents/skills/ makes them auto-discovered without any custom code.",
+        "vibe/core/skills/builtins/__init__.py fork modification (3-line diff importing load_superpowers_skills): revert to upstream's single-line form; no replacement needed because skills live in ~/.agents/skills and are loaded by SkillManager at runtime.",
+        "vibe/core/skills/builtins/superpowers/ entire package directory: DELETE — content moves to ~/.agents/skills/<skill-name>/ on the user's machine or to a deploy-time setup step. Nothing in vibe/core needs to bundle these files."
+      ],
+      "port_steps": [
+        "1. [Content relocation] Copy the 14 skill directories from vibe/core/skills/builtins/superpowers/skills/ into ~/.agents/skills/ on the target machine (one directory per skill, e.g. ~/.agents/skills/superpowers-brainstorming/SKILL.md). This preserves translated names, all support assets, and the superpowers- prefix.",
+        "2. [Revert custom loader] In vibe/core/skills/builtins/__init__.py, remove the load_superpowers_skills import and _ALL_SKILLS list; restore the upstream one-liner: `BUILTIN_SKILLS: dict[str, SkillInfo] = {skill.name: skill for skill in [VIBE_SKILL]}`. Apply this to the v2.13 working tree — the file is already correct in v2.13, so no edit is needed there.",
+        "3. [Delete bundled package] Remove vibe/core/skills/builtins/superpowers/ entirely from the v2.13 port (do not copy it). Also do not copy scripts/superpowers/ — those are one-shot migration tools, not runtime code.",
+        "4. [Carry mutates_state = False for Skill tool] Add `mutates_state: ClassVar[bool] = False` to the Skill class in vibe/core/tools/builtins/skill.py in v2.13. This is a P5/plan-mode annotation — do it as part of the plan-mode port (P5) rather than here, but note the dependency.",
+        "5. [Verify discovery] Confirm that SkillManager in v2.13 scans GLOBAL_AGENTS_SKILLS_DIR (verified: HarnessFilesManager.user_skills_dirs returns both ~/.vibe/skills and ~/.agents/skills). If ~/.agents/skills exists and contains the translated SKILL.md files, all 14 skills appear in manager.available_skills automatically.",
+        "6. [Update the translation scripts] If the scripts/superpowers/ scripts need to be kept for future upstream refreshes, update the ROOT path in both scripts from ~/.vibe/vendor/superpowers/skills to ~/.agents/skills (or whatever target directory is chosen). The scripts themselves are idempotent and need no other changes.",
+        "7. [Review using-superpowers meta-skill] Keep using-superpowers — it is the dispatch gateway that tells the model which skills exist and how to invoke them. Its content still applies (superpowers- prefix names, skill tool invocations). No content change needed unless v2.13 introduces new built-in tools that conflict with the translated prose.",
+        "8. [Run tests] pytest tests/skills/ — test_builtin_sync.py checks BUILTIN_SKILLS contains only 'vibe', which will now pass correctly. test_manager.py checks that user skill paths (including ~/.agents/skills) are auto-discovered."
+      ],
+      "tests_to_migrate": [
+        "tests/skills/test_builtin_sync.py — migrate as-is; after the revert, BUILTIN_SKILLS will contain only 'vibe' again so all assertions pass unchanged. The fork version is identical to the v2.9.6 upstream version (no superpowers-specific assertions were added).",
+        "tests/skills/test_manager.py — migrate as-is; already tests ~/.agents/skills discovery in v2.13's TestSkillManagerSearchPaths (test_discovers_from_agents_skills_when_cwd_trusted, test_discovers_from_both_vibe_and_agents_skills_when_cwd_trusted). These tests were added by upstream v2.13, not by the fork.",
+        "tests/skills/test_models.py — migrate as-is; no superpowers-specific content.",
+        "tests/skills/test_parser.py — migrate as-is; no superpowers-specific content.",
+        "tests/tools/test_skill.py — migrate but check mutates_state assertion once P5 lands; if P5 adds mutates_state to the Skill tool, a test asserting mutates_state=False should be added here."
+      ],
+      "risks": [
+        "Skill name collision: the superpowers- prefix was specifically chosen to avoid collisions with vibe built-in slash commands (e.g. /loop, /plan added in the fork). If v2.13 adds new built-in commands that overlap with superpowers-* names, the builtin-wins guard in SkillManager._discover_skills_in_dir will silently skip the colliding skill. Audit new v2.13 CLI commands against the 14 skill names before deploying.",
+        "Build-time vs run-time availability: the bundled approach guaranteed skills were always present; the ~/.agents/skills approach requires a setup step on every machine. The port plan must include a deployment/install mechanism (e.g. dotfiles, install script, or a one-time migration script) or the skills will simply be missing for new users.",
+        "Translation script ROOT paths are hardcoded to /home/zdy/.vibe/vendor/superpowers/skills in both scripts/superpowers/ files. These will need updating before the scripts can be run on any other machine or CI system.",
+        "mutates_state dependency on P5: the Skill.mutates_state=False annotation in vibe/core/tools/builtins/skill.py is consumed by the plan-mode gate (agent_loop.py line 1242 in the fork). If P5 is not ported, this annotation is unused but harmless. If P5 is ported first and Skill.mutates_state is left at the default (True), skills will be blocked in plan mode — a regression. Coordinate P5 and P6 ordering.",
+        "using-superpowers skill references other superpowers- skills by exact name. If any skill is renamed or missing from ~/.agents/skills, the meta-skill's invocation table will list skills that cannot be loaded. The 14 skill names and the superpowers- prefix must be kept exactly as translated."
+      ],
+      "estimated_loc": 72,
+      "confidence": "high",
+      "_key": "skills-relocation"
+    }
+  ],
+  "audit": {
+    "uncovered_code_files": [
+      "vibe/cli/narrator_manager/narrator_manager.py",
+      "vibe/cli/textual_ui/handlers/event_handler.py",
+      "vibe/cli/textual_ui/widgets/question_app.py",
+      "vibe/cli/turn_summary/tracker.py",
+      "vibe/core/llm/backend/base.py",
+      "vibe/core/llm/backend/vertex.py",
+      "vibe/core/paths/_vibe_home.py",
+      "vibe/core/programmatic.py",
+      "vibe/core/prompts/__init__.py",
+      "vibe/core/session/session_logger.py",
+      "vibe/core/tools/builtins/ask_user_question.py",
+      "vibe/core/tools/builtins/bash.py",
+      "vibe/core/tools/builtins/grep.py",
+      "vibe/core/tools/builtins/read_file.py",
+      "vibe/core/tools/builtins/search_replace.py",
+      "vibe/core/tools/builtins/task.py",
+      "vibe/core/tools/builtins/todo.py",
+      "vibe/core/tools/builtins/webfetch.py",
+      "vibe/core/tools/builtins/websearch.py",
+      "vibe/core/tools/builtins/write_file.py"
+    ],
+    "extra_native_opportunities": [
+      "AGENTS_HOME + user_skills_dirs: v2.13 has paths/_agents_home.py (AGENTS_HOME = ~/.agents) and HarnessFilesManager.user_skills_dirs already includes AGENTS_HOME/skills. The skills-relocation spec (P6) can drop all custom loader code and simply rely on v2.13's SkillManager._compute_search_paths, which natively calls mgr.user_skills_dirs to discover ~/.agents/skills.",
+      "PLANS_DIR alignment is already native: v2.13's _vibe_home.py already defines PLANS_DIR = VIBE_HOME.path / 'plans' — the fork's _vibe_home.py change (moving PLANS_DIR under VIBE_HOME) matches v2.13 exactly, so this file can be taken verbatim from v2.13 and the long explanatory comment can be dropped.",
+      "AutoCompactMiddleware + MiddlewareAction.COMPACT wiring: v2.13 has AutoCompactMiddleware and the COMPACT action natively wired in _setup_middleware. The fork's plan-mode spec (P5) re-ports this path manually; at port time, use v2.13's _setup_middleware block for auto-compaction directly, leaving only MicroCompactMiddleware as a custom addition on top.",
+      "HarnessFilesManager multi-root tool discovery: v2.13's user_tools_dirs and project_tools_dirs provide multi-directory builtin tool loading. This could replace the fork's single DEFAULT_TOOL_DIR GlobalPath if we want parity with Claude-Code-style per-project tool override directories.",
+      "session_logger fsync-to-thread is custom (NOT in v2.13): v2.13 still uses blocking os.fsync calls. The fork's asyncio.to_thread offload (session_logger.py) is a genuine custom improvement that must be ported as a new feature spec, not taken from v2.13. The uncovered file warrants its own small 'session-logger-async-fsync' spec."
+    ],
+    "notes": "ALL uncovered non-test source files fall into four logical clusters:\\n\\n1. TELEMETRY CLEANUP (narrator_manager.py, turn_summary/tracker.py): Both files drop session_metadata_getter / _build_metadata — the same privacy goal as the telemetry-off spec but applied to the TurnSummaryTracker secondary call path. Should be added to the telemetry-off spec or given a small companion spec 'telemetry-turn-summary'.\\n\\n2. PLAN-MODE DISPATCH GATE — mutates_state annotations (10 builtin tool files + base.py + vertex.py + programmatic.py + question_app.py): All 10 builtins add mutates_state: ClassVar[bool]; base.py adds reasoning_effort to the Protocol; vertex.py ignores it; programmatic.py adds the fork-to-dev reentry loop; question_app.py adds PgUp/PgDn scroll for the ExitPlanMode content preview. These are all part of the plan-mode redesign (P5) and should be added to that spec.\\n\\n3. REASONING-TWO-TIER companion (event_handler.py): collapsed=False for ReasoningMessage instead of get_tools_collapsed() — reasoning content is never auto-collapsed. Belongs in the reasoning-two-tier spec.\\n\\n4. STANDALONE IMPROVEMENTS (session_logger.py, prompts/__init__.py, paths/_vibe_home.py): session_logger.py is an event-loop improvement (fsync → asyncio.to_thread); prompts/__init__.py adds GENERAL_PURPOSE enum value (used by system_prompt P5); _vibe_home.py is a comment-only explanation of the PLANS_DIR location decision (code is v2.13-identical). The session_logger change needs its own small spec; the other two can be noted as housekeeping.\\n\\nAll uncovered test files are companion tests for the same four clusters — they test the same features as the source changes above (plan-mode dispatch, telemetry cleanup, stats TurnRecord, middleware sparse-reminder, inline tool call promotion, orphan trailing tool repair, etc.) and should be folded into the corresponding specs rather than treated as independent gaps."
+  }
+}
