@@ -1347,6 +1347,59 @@ NarratorStatus {
     scrollbar-size: 1 1;
 }
 
+#agentspicker-app {
+    width: 100%;
+    height: auto;
+    background: transparent;
+    border: solid $foreground-muted;
+    padding: 0 1;
+    margin: 0;
+}
+
+#agentspicker-content {
+    width: 100%;
+    height: auto;
+}
+
+.agentspicker-title {
+    height: auto;
+    text-style: bold;
+    color: $primary;
+}
+
+#agentspicker-options {
+    width: 100%;
+    max-height: 30vh;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+}
+
+#agentspicker-options:focus {
+    border: none;
+}
+
+.agentspicker-preview {
+    width: 100%;
+    height: auto;
+    max-height: 12;
+    color: $foreground;
+    margin-top: 1;
+    padding: 0 1;
+    border: none;
+}
+
+.agentspicker-help {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    margin-top: 1;
+
+    &:ansi {
+        text-style: dim;
+    }
+}
+
 #modelpicker-app {
     width: 100%;
     height: auto;

@@ -57,6 +57,7 @@ class AgentManager:
             )
         self.active_profile = profile
         self._cached_config: VibeConfig | None = None
+        self._runtime_registered: set[str] = set()
 
     @property
     def _config(self) -> VibeConfig:
@@ -96,6 +97,36 @@ class AgentManager:
 
     def register_agent(self, profile: AgentProfile) -> None:
         self._available[profile.name] = profile
+        self._runtime_registered.add(profile.name)
+        self._cached_config = None
+
+    def reload_from_disk(self) -> None:
+        """Re-scan agent search paths and rebuild the available-agents map.
+
+        Lighter than the app-level `_reload_config()` — does NOT touch the
+        agent loop or message UI. Use after editing an agent TOML on disk
+        when only the agent registry needs to refresh.
+
+        Active profile is preserved by name; if its TOML was edited, the
+        new content is picked up. If the active agent was deleted, falls
+        back to DEFAULT.
+
+        Agents registered at runtime via `register_agent()` (e.g. the ACP
+        loop's CHAT profile) are preserved across the reload — only on-disk
+        and builtin agents are rediscovered.
+        """
+        active_name = self.active_profile.name
+        runtime_profiles = {
+            name: profile
+            for name, profile in self._available.items()
+            if name in self._runtime_registered
+        }
+        self._search_paths = self._compute_search_paths(self._config)
+        self._available = self._discover_agents()
+        self._available.update(runtime_profiles)
+        self.active_profile = self._available.get(
+            active_name, self._available[BuiltinAgentName.DEFAULT]
+        )
         self._cached_config = None
 
     def invalidate_config(self) -> None:

@@ -9,7 +9,10 @@ from enum import StrEnum, auto
 import gc
 import os
 from pathlib import Path
+import shlex
 import signal
+import subprocess
+import tempfile
 import time
 from typing import Any, ClassVar, assert_never, cast
 from uuid import uuid4
@@ -54,6 +57,7 @@ from vibe.cli.textual_ui.quit_manager import QuitManager
 from vibe.cli.textual_ui.remote import RemoteSessionManager, is_progress_event
 from vibe.cli.textual_ui.scheduled_loop_runner import ScheduledLoopRunner
 from vibe.cli.textual_ui.session_exit import print_session_resume_message
+from vibe.cli.textual_ui.widgets.agents_picker import AgentsPickerApp
 from vibe.cli.textual_ui.widgets.approval_app import ApprovalApp
 from vibe.cli.textual_ui.widgets.banner.banner import Banner
 from vibe.cli.textual_ui.widgets.chat_input import ChatInputContainer
@@ -221,6 +225,7 @@ class BottomApp(StrEnum):
     This allows dynamic lookup via: BottomApp[type(widget).__name__.removesuffix("App")]
     """
 
+    AgentsPicker = auto()
     Approval = auto()
     Config = auto()
     ConnectorAuth = auto()
@@ -879,6 +884,104 @@ class VibeApp(App):  # noqa: PLR0904
         self, _event: ThinkingPickerApp.Cancelled
     ) -> None:
         await self._switch_to_input_app()
+
+    async def on_agents_picker_app_cancelled(
+        self, _event: AgentsPickerApp.Cancelled
+    ) -> None:
+        await self._switch_to_input_app()
+
+    async def on_agents_picker_app_edit_requested(
+        self, event: AgentsPickerApp.EditRequested
+    ) -> None:
+        from vibe.cli.textual_ui.agent_editor import AgentEditorError, resolve_edit_path
+
+        manager = self.agent_loop.agent_manager
+        try:
+            path = resolve_edit_path(event.name, manager)
+        except AgentEditorError as e:
+            await self._switch_to_input_app()
+            await self._mount_and_scroll(
+                ErrorMessage(f"Cannot edit `{event.name}`: {e}")
+            )
+            return
+
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+
+        await self._switch_to_input_app()
+
+        if WINDOWS or self._driver is None or not self._driver.can_suspend:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Suspend not supported in this terminal. Edit "
+                    f"`{path}` manually, then run /reload."
+                )
+            )
+            return
+
+        try:
+            with self.suspend():
+                subprocess.run([*shlex.split(editor), str(path)], check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            await self._mount_and_scroll(ErrorMessage(f"Editor exited with error: {e}"))
+            return
+
+        try:
+            manager.reload_from_disk()
+            self.agent_loop.refresh_config()
+            await self.agent_loop.refresh_system_prompt()
+        except Exception as e:
+            await self._mount_and_scroll(
+                ErrorMessage(f"Failed to reload after edit: {e}")
+            )
+            return
+
+        await self._mount_and_scroll(
+            UserCommandMessage(f"Agent `{event.name}` reloaded from `{path}`.")
+        )
+
+    async def on_agents_picker_app_view_full_requested(
+        self, event: AgentsPickerApp.ViewFullRequested
+    ) -> None:
+        manager = self.agent_loop.agent_manager
+        try:
+            profile = manager.get_agent(event.name)
+            merged = profile.apply_to_config(self.agent_loop.base_config)
+            content = merged.system_prompt
+        except Exception as e:
+            await self._switch_to_input_app()
+            await self._mount_and_scroll(
+                ErrorMessage(f"Cannot resolve system prompt for `{event.name}`: {e}")
+            )
+            return
+
+        await self._switch_to_input_app()
+
+        if WINDOWS or self._driver is None or not self._driver.can_suspend:
+            await self._mount_and_scroll(
+                UserCommandMessage(
+                    f"### System prompt for `{event.name}`\n\n```\n{content}\n```"
+                )
+            )
+            return
+
+        pager = os.environ.get("PAGER") or "less"
+
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".md", prefix=f"vibe_agent_{event.name}_"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            try:
+                with self.suspend():
+                    subprocess.run([*shlex.split(pager), tmp_path], check=False)
+            except OSError as e:
+                await self._mount_and_scroll(
+                    ErrorMessage(f"Could not launch pager: {e}")
+                )
+                return
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     async def on_theme_picker_app_theme_previewed(
         self, message: ThemePickerApp.ThemePreviewed
@@ -1831,6 +1934,12 @@ class VibeApp(App):  # noqa: PLR0904
             UserCommandMessage(f"Output style is now `{arg}`.")
         )
 
+    async def _show_agents(self, **kwargs: Any) -> None:
+        """Switch to the agents picker in the bottom panel."""
+        if self._current_bottom_app == BottomApp.AgentsPicker:
+            return
+        await self._switch_to_agents_picker_app()
+
     async def _show_proxy_setup(self, **kwargs: Any) -> None:
         if self._current_bottom_app == BottomApp.ProxySetup:
             return
@@ -2339,6 +2448,39 @@ class VibeApp(App):  # noqa: PLR0904
         await self._mount_and_scroll(UserCommandMessage("Voice settings opened..."))
         await self._switch_from_input(VoiceApp(self.config))
 
+    async def _switch_to_agents_picker_app(self) -> None:
+        if self._current_bottom_app == BottomApp.AgentsPicker:
+            return
+
+        manager = self.agent_loop.agent_manager
+        order = manager.get_agent_order()
+        order_set = set(order)
+        ordered_profiles = [manager.available_agents[name] for name in order]
+        ordered_profiles += sorted(
+            (
+                profile
+                for name, profile in manager.available_agents.items()
+                if name not in order_set
+            ),
+            key=lambda p: p.name,
+        )
+
+        prompts: dict[str, str | None] = {}
+        for profile in ordered_profiles:
+            try:
+                merged = profile.apply_to_config(self.agent_loop.base_config)
+                prompts[profile.name] = merged.system_prompt
+            except Exception:
+                prompts[profile.name] = None
+
+        await self._switch_from_input(
+            AgentsPickerApp(
+                profiles=ordered_profiles,
+                active_name=manager.active_profile.name,
+                prompts=prompts,
+            )
+        )
+
     async def _switch_to_model_picker_app(self) -> None:
         if self._current_bottom_app == BottomApp.ModelPicker:
             return
@@ -2423,9 +2565,11 @@ class VibeApp(App):  # noqa: PLR0904
             if chat.is_at_bottom:
                 self.call_after_refresh(chat.anchor)
 
-    def _focus_current_bottom_app(self) -> None:
+    def _focus_current_bottom_app(self) -> None:  # noqa: PLR0912
         try:
             match self._current_bottom_app:
+                case BottomApp.AgentsPicker:
+                    self.query_one(AgentsPickerApp).focus()
                 case BottomApp.Input:
                     self.query_one(ChatInputContainer).focus_input()
                 case BottomApp.Config:
@@ -2519,6 +2663,14 @@ class VibeApp(App):  # noqa: PLR0904
         try:
             thinking_picker = self.query_one(ThinkingPickerApp)
             thinking_picker.post_message(ThinkingPickerApp.Cancelled())
+        except Exception:
+            pass
+        self._last_escape_time = None
+
+    def _handle_agents_picker_app_escape(self) -> None:
+        try:
+            agents_picker = self.query_one(AgentsPickerApp)
+            agents_picker.post_message(AgentsPickerApp.Cancelled())
         except Exception:
             pass
         self._last_escape_time = None
@@ -2763,6 +2915,8 @@ class VibeApp(App):  # noqa: PLR0904
             self._handle_approval_app_escape()
         elif self._current_bottom_app == BottomApp.Question:
             self._handle_question_app_escape()
+        elif self._current_bottom_app == BottomApp.AgentsPicker:
+            self._handle_agents_picker_app_escape()
         elif self._current_bottom_app == BottomApp.ModelPicker:
             self._handle_model_picker_app_escape()
         elif self._current_bottom_app == BottomApp.ThemePicker:

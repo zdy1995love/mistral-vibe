@@ -51,6 +51,11 @@ class CommandRegistry:
 
     def _build_commands(self) -> dict[str, Command]:
         return {
+            "agents": Command(
+                aliases=frozenset(["/agents"]),
+                description="List, preview, and edit available agents",
+                handler="_show_agents",
+            ),
             "help": Command(
                 aliases=frozenset(["/help"]),
                 description="Show help message",
