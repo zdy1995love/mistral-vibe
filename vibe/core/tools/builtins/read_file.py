@@ -79,6 +79,7 @@ class ReadFile(
         "Read a text file (encoding detected safely), returning content from a "
         "specific line range. Reading is capped by a byte limit for safety."
     )
+    mutates_state: ClassVar[bool] = False
 
     @final
     async def run(

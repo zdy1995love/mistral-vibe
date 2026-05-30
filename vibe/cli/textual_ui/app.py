@@ -95,6 +95,7 @@ from vibe.cli.textual_ui.widgets.model_picker import ModelPickerApp
 from vibe.cli.textual_ui.widgets.narrator_status import NarratorStatus
 from vibe.cli.textual_ui.widgets.no_markup_static import NoMarkupStatic
 from vibe.cli.textual_ui.widgets.path_display import PathDisplay
+from vibe.cli.textual_ui.widgets.plan_mode_indicator import PlanModeIndicator
 from vibe.cli.textual_ui.widgets.proxy_setup_app import ProxySetupApp
 from vibe.cli.textual_ui.widgets.question_app import QuestionApp
 from vibe.cli.textual_ui.widgets.rewind_app import RewindApp
@@ -139,6 +140,7 @@ from vibe.cli.vscode_extension_promo import (
 )
 from vibe.core.agent_loop import AgentLoop, TeleportError
 from vibe.core.agents import AgentProfile
+from vibe.core.agents.models import BuiltinAgentName
 from vibe.core.audio_player.audio_player import AudioPlayer
 from vibe.core.audio_recorder import AudioRecorder
 from vibe.core.autocompletion.path_prompt import (
@@ -435,6 +437,7 @@ class VibeApp(App):  # noqa: PLR0904
         self._last_escape_time: float | None = None
         self._quit_manager = QuitManager(self)
         self._banner: Banner | None = None
+        self._plan_indicator: PlanModeIndicator | None = None
         self._whats_new_message: WhatsNewMessage | None = None
         self._cached_messages_area: Widget | None = None
         self._cached_chat: ChatScroll | None = None
@@ -526,6 +529,7 @@ class VibeApp(App):  # noqa: PLR0904
 
         with Horizontal(id="bottom-bar"):
             yield PathDisplay(self.config.displayed_workdir or Path.cwd())
+            yield PlanModeIndicator()
             yield NoMarkupStatic(id="spacer")
             yield ContextProgress()
 
@@ -538,6 +542,10 @@ class VibeApp(App):  # noqa: PLR0904
         self._cached_loading_area = self.query_one("#loading-area-content")
         self._feedback_bar = self.query_one(FeedbackBar)
         self._feedback_bar_manager = FeedbackBarManager()
+        self._plan_indicator = self.query_one(PlanModeIndicator)
+        self._plan_indicator.set_active(
+            self.agent_loop.agent_profile.name == BuiltinAgentName.PLAN
+        )
 
         self.event_handler = EventHandler(
             mount_callback=self._mount_and_scroll,
@@ -1529,7 +1537,7 @@ class VibeApp(App):  # noqa: PLR0904
                     event, loading_widget=self._loading_widget
                 )
 
-    async def _handle_agent_loop_turn(
+    async def _handle_agent_loop_turn(  # noqa: PLR0915
         self, prompt: str, *, title_source: str | None = None
     ) -> None:
         self._agent_running = True
@@ -1570,12 +1578,25 @@ class VibeApp(App):  # noqa: PLR0904
                 )
             self._narrator_manager.cancel()
             self._narrator_manager.on_turn_start(rendered_prompt)
-            async with aclosing(
-                self.agent_loop.act(
-                    rendered_prompt, client_message_id=message_id, auto_title=auto_title
-                )
-            ) as events:
-                await self._handle_agent_loop_events(events)
+            current_prompt = rendered_prompt
+            current_message_id = message_id
+            current_auto_title = auto_title
+            while True:
+                async with aclosing(
+                    self.agent_loop.act(
+                        current_prompt,
+                        client_message_id=current_message_id,
+                        auto_title=current_auto_title,
+                    )
+                ) as events:
+                    await self._handle_agent_loop_events(events)
+                # Fork-to-dev: exit_plan_mode / plan confirmation staged a fork.
+                # Wipe planning context and re-enter act() with the plan seed.
+                if self.agent_loop.pending_fork_to_dev is None:
+                    break
+                current_prompt = await self._handle_pending_fork()
+                current_message_id = str(uuid4())
+                current_auto_title = None
         except asyncio.CancelledError:
             await self._handle_turn_error()
             self._narrator_manager.on_turn_cancel()
@@ -1606,6 +1627,37 @@ class VibeApp(App):  # noqa: PLR0904
                 await self.event_handler.finalize_streaming()
             await self._refresh_windowing_from_history()
             self._terminal_notifier.notify(NotificationContext.COMPLETE)
+
+    async def _handle_pending_fork(self) -> str:
+        """Consume agent_loop.pending_fork_to_dev: clear context, switch
+        profile, refresh UI, return the seed message for the next act() call.
+        """
+        await self._remove_loading_widget()
+        if self.event_handler:
+            await self.event_handler.finalize_streaming()
+
+        # fork_to_dev() runs clear_history + switch_agent; agent_loop.messages
+        # is reset to [system_prompt] post-call.
+        seed = await self.agent_loop.fork_to_dev()
+
+        self._reset_ui_state()
+        if self._chat_input_container:
+            self._chat_input_container.set_custom_border(None)
+
+        messages_area = self._cached_messages_area or self.query_one("#messages")
+        await messages_area.remove_children()
+        await messages_area.mount(
+            UserCommandMessage(
+                "Plan approved — wiped planning context. Implementing in a "
+                "fresh conversation."
+            )
+        )
+        # clear_history left only [system] in agent_loop.messages; the next
+        # act(seed) appends the user message at index 1, so message_index=1
+        # keeps the widget/message map aligned for rewind/windowing.
+        await self._mount_and_scroll(UserMessage(seed, message_index=1))
+        self._on_profile_changed()
+        return seed
 
     def _resolve_turn_error_message(self, e: Exception) -> str:
         if isinstance(e, RateLimitError):
@@ -3112,6 +3164,10 @@ class VibeApp(App):  # noqa: PLR0904
     def _on_profile_changed(self) -> None:
         self._refresh_profile_widgets()
         self._refresh_banner()
+        if self._plan_indicator is not None:
+            self._plan_indicator.set_active(
+                self.agent_loop.agent_profile.name == BuiltinAgentName.PLAN
+            )
 
     def _refresh_banner(self) -> None:
         if self._banner:
@@ -3138,6 +3194,74 @@ class VibeApp(App):  # noqa: PLR0904
                 )
             else:
                 self._chat_input_container.set_custom_border(None)
+
+    async def _toggle_plan_mode(self, cmd_args: str = "", **kwargs: Any) -> None:
+        if cmd_args.strip():
+            # /plan toggles; arguments would be ambiguous vs the toggle.
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "/plan does not accept arguments. Use /plan to toggle.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+        if self._agent_running:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Cannot toggle plan mode while agent loop is processing.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+
+        manager = self.agent_loop.agent_manager
+        if manager.active_profile.name == BuiltinAgentName.PLAN:
+            stashed = manager.pre_plan_profile
+            target = stashed or BuiltinAgentName.DEFAULT
+            # Defensive: a custom pre-plan profile may have been removed while
+            # in plan mode (e.g. agent toml deleted) — fall back to DEFAULT.
+            if stashed and stashed not in manager.available_agents:
+                target = BuiltinAgentName.DEFAULT
+        else:
+            target = BuiltinAgentName.PLAN
+
+        # Drive through the same worker + run_coroutine_threadsafe pattern as
+        # _cycle_agent so all entry paths converge on the canonical full-reload
+        # via agent_loop.switch_agent (NEVER asyncio.run — deadlocks the loop).
+        new_profile = manager.get_agent(target)
+        self._update_profile_widgets(new_profile)
+        if self._chat_input_container:
+            self._chat_input_container.switching_mode = True
+
+        loop = asyncio.get_running_loop()
+
+        def schedule_switch() -> None:
+            self._switch_agent_generation += 1
+            my_gen = self._switch_agent_generation
+
+            def switch_agent_sync() -> None:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.agent_loop.switch_agent(target), loop
+                    )
+                    future.result()
+                    self.agent_loop.set_approval_callback(self._approval_callback)
+                    self.agent_loop.set_user_input_callback(self._user_input_callback)
+                finally:
+                    if (
+                        self._chat_input_container
+                        and self._switch_agent_generation == my_gen
+                    ):
+                        self.call_from_thread(self._on_profile_changed)
+                        self.call_from_thread(
+                            setattr, self._chat_input_container, "switching_mode", False
+                        )
+
+            self.run_worker(
+                switch_agent_sync, group="switch_agent", exclusive=True, thread=True
+            )
+
+        self.call_after_refresh(schedule_switch)
 
     async def _cycle_agent(self) -> None:
         new_profile = self.agent_loop.agent_manager.next_agent(

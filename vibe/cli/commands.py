@@ -106,6 +106,11 @@ class CommandRegistry:
                 description="Compact conversation history by summarizing. Optionally pass instructions to guide the summary",
                 handler="_compact_history",
             ),
+            "plan": Command(
+                aliases=frozenset(["/plan"]),
+                description="Toggle plan mode (read-only planning; exit forks to a fresh implementation context)",
+                handler="_toggle_plan_mode",
+            ),
             "exit": Command(
                 aliases=frozenset(["/exit"]),
                 description="Exit the application",

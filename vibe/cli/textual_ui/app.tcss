@@ -1138,6 +1138,14 @@ ExpandingBorder {
     content-align: left bottom;
 }
 
+#plan-mode-indicator {
+    width: auto;
+    height: auto;
+    margin-left: 1;
+    color: $text-warning;
+    text-style: bold;
+}
+
 PathDisplay,
 ContextProgress {
     width: auto;

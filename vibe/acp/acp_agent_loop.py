@@ -184,7 +184,11 @@ from vibe.setup.onboarding.context import OnboardingContext
 
 logger = logging.getLogger("vibe")
 
-NON_INTERACTIVE_DISABLED_TOOLS = ["ask_user_question", "exit_plan_mode"]
+NON_INTERACTIVE_DISABLED_TOOLS = [
+    "ask_user_question",
+    "exit_plan_mode",
+    "enter_plan_mode",
+]
 
 
 class ForkSessionParams(BaseModel):

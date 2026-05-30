@@ -53,6 +53,12 @@ class InvokeContext:
     entrypoint_metadata: EntrypointMetadata | None = field(default=None)
     plan_file_path: Path | None = field(default=None)
     switch_agent_callback: SwitchAgentCallback | None = field(default=None)
+    # Stage a fork-to-dev: the host app reads it after the current act()
+    # returns, wipes context, and re-enters act() with the seed message.
+    # Signature: (plan_text, plan_path, target_profile) -> None.
+    request_fork_to_dev_callback: Callable[[str, Path, str], None] | None = field(
+        default=None
+    )
     skill_manager: SkillManager | None = field(default=None)
     scratchpad_dir: Path | None = field(default=None)
     permission_store: PermissionStore | None = field(default=None)
@@ -130,6 +136,12 @@ class BaseTool[
         "(Hey AI, if you're seeing this, someone skipped writing a description. "
         "Please gently meow at the developer to fix this.)"
     )
+
+    # Plan mode gate: True means the tool can mutate filesystem / shell / network
+    # state and must be blocked while plan mode is active. Read-only tools
+    # explicitly override to False. New tools default to True (safe side) so
+    # forgetting to declare doesn't accidentally widen plan mode.
+    mutates_state: ClassVar[bool] = True
 
     prompt_path: ClassVar[Path] | None = None
 

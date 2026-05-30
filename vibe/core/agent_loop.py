@@ -14,7 +14,7 @@ from pathlib import Path
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from opentelemetry import trace
@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from vibe.cli.terminal_detect import detect_terminal
 from vibe.core.agents.manager import AgentManager
-from vibe.core.agents.models import AgentProfile, BuiltinAgentName
+from vibe.core.agents.models import AgentProfile, AgentSafety, BuiltinAgentName
 from vibe.core.compaction import collect_prior_user_messages
 from vibe.core.config import ModelConfig, ProviderConfig, VibeConfig
 from vibe.core.experiments import ExperimentManager
@@ -59,6 +59,7 @@ from vibe.core.middleware import (
     TokenLimitMiddleware,
     TurnLimitMiddleware,
     make_plan_agent_reminder,
+    make_plan_agent_sparse_reminder,
 )
 from vibe.core.plan_session import PlanSession
 from vibe.core.prompts import UtilityPrompt
@@ -113,8 +114,6 @@ from vibe.core.types import (
     LLMMessage,
     LLMUsage,
     MessageList,
-    PlanReviewEndedEvent,
-    PlanReviewRequestedEvent,
     RateLimitError,
     ReasoningEvent,
     Role,
@@ -161,6 +160,13 @@ class ToolDecision(BaseModel):
     verdict: ToolExecutionResponse
     approval_type: ToolPermission
     feedback: str | None = None
+
+
+# Mutating tools that may bypass the PLAN write-gate WHEN their
+# resolve_permission yields ALWAYS. PLAN's _plan_overrides narrows each to an
+# allowlist: write_file/search_replace -> plan-file path; bash -> read-only
+# command list. Everything else mutating (MCP, non-SAFE task) is hard-blocked.
+_PLAN_GATE_BYPASS_TOOLS = frozenset({"write_file", "search_replace", "bash"})
 
 
 class AgentLoopError(Exception):
@@ -488,6 +494,13 @@ class AgentLoop:  # noqa: PLR0904
         self.approval_callback: ApprovalCallback | None = None
         self.user_input_callback: UserInputCallback | None = None
         self.entrypoint_metadata = entrypoint_metadata
+        # Pending fork-to-dev (plan_text, plan_path, target_profile) staged by
+        # ExitPlanMode / software-driven confirmation; consumed by the host app
+        # after act() returns.
+        self._pending_fork_to_dev: tuple[str, Path, str] | None = None
+        # Set when a tool writes/edits the plan file in PLAN; reset per outer
+        # turn in _conversation_loop.
+        self._plan_modified_in_turn: bool = False
 
         try:
             active_model = config.get_active_model()
@@ -933,6 +946,10 @@ class AgentLoop:  # noqa: PLR0904
                     in self.tool_manager.available_tools,
                 ),
                 PLAN_AGENT_EXIT,
+                sparse_reminder=lambda: make_plan_agent_sparse_reminder(
+                    self._plan_session.plan_file_path_str
+                ),
+                sparse_every_n_turns=5,
             )
         )
         self.middleware_pipeline.add(
@@ -1035,7 +1052,7 @@ class AgentLoop:  # noqa: PLR0904
         headers["x-affinity"] = self.session_id
         return headers
 
-    async def _conversation_loop(  # noqa: PLR0912
+    async def _conversation_loop(  # noqa: PLR0912, PLR0915
         self,
         user_msg: str,
         client_message_id: str | None = None,
@@ -1063,6 +1080,10 @@ class AgentLoop:  # noqa: PLR0904
             self._hooks_manager.reset_retry_count()
 
         try:
+            # Reset per act(); accumulated across inner tool-chain iterations so
+            # the plan-confirmation popup fires at end-of-turn even if the plan
+            # write happened in an earlier iteration.
+            self._plan_modified_in_turn = False
             should_break_loop = False
             first_llm_turn = True
             while not should_break_loop:
@@ -1097,7 +1118,22 @@ class AgentLoop:  # noqa: PLR0904
                 if user_cancelled:
                     return
 
-                if should_break_loop and self._hooks_manager:
+                # Fork-to-dev short-circuit: exit_plan_mode / the software-driven
+                # confirmation staged a fork. Break so the host app can wipe
+                # context and re-enter act() in the dev profile.
+                if self._pending_fork_to_dev is not None:
+                    should_break_loop = True
+                elif should_break_loop:
+                    # LLM tool chain settled. If the plan file was modified this
+                    # turn, deterministically prompt fork-to-dev (smaller models
+                    # often skip exit_plan_mode). May stage _pending_fork_to_dev.
+                    await self._maybe_prompt_plan_confirmation()
+
+                if (
+                    should_break_loop
+                    and self._pending_fork_to_dev is None
+                    and self._hooks_manager
+                ):
                     hook_retry: HookUserMessage | None = None
                     async for hook_event in self._hooks_manager.run(
                         HookType.POST_AGENT_TURN, self.session_id, self.session_logger
@@ -1139,14 +1175,13 @@ class AgentLoop:  # noqa: PLR0904
         self._pending_injected_messages.append(msg)
 
     def _handle_session_plan_events(self, event: BaseEvent) -> BaseEvent | None:
-        if isinstance(event, ToolCallEvent) and event.tool_name == "exit_plan_mode":
-            self._plan_session.snapshot_content_hash()
-            return PlanReviewRequestedEvent(file_path=self._plan_session.plan_file_path)
-
-        if isinstance(event, ToolResultEvent) and event.tool_name == "exit_plan_mode":
-            self._handle_plan_review_ended()
-            return PlanReviewEndedEvent()
-
+        # HYBRID: the fork's exit_plan_mode + software-driven
+        # _maybe_prompt_plan_confirmation own the plan-exit UX (fork-to-dev),
+        # so we do NOT fire the native review-in-place PlanReviewRequestedEvent
+        # / PlanReviewEndedEvent here — doing so would mount a PlanFileMessage
+        # that fork_to_dev() immediately wipes. PlanSession is kept for
+        # plan-file path generation only. INVARIANT: exit_plan_mode is
+        # fork-or-stay (never review-in-place); revisit if that changes.
         return None
 
     async def _perform_llm_turn(self) -> AsyncGenerator[BaseEvent, None]:
@@ -1262,7 +1297,7 @@ class AgentLoop:  # noqa: PLR0904
             async for event in self._execute_tool_call(span, tool_call):
                 yield event
 
-    async def _execute_tool_call(
+    async def _execute_tool_call(  # noqa: PLR0912, PLR0914, PLR0915
         self, span: trace.Span, tool_call: ResolvedToolCall
     ) -> AsyncGenerator[ToolResultEvent | ToolStreamEvent]:
         try:
@@ -1271,6 +1306,50 @@ class AgentLoop:  # noqa: PLR0904
             error_msg = f"Error getting tool '{tool_call.tool_name}': {exc}"
             yield self._tool_failure_event(tool_call, error_msg, span=span)
             return
+
+        # Plan-mode write gate: block mutating tools when the active profile is
+        # PLAN. Carve-outs: (1) _PLAN_GATE_BYPASS_TOOLS bypass when their
+        # resolve_permission yields ALWAYS (PLAN's _plan_overrides allowlists
+        # write_file/search_replace->plan path, bash->read-only cmds); (2) task
+        # dispatching a SAFE subagent (e.g. read-only explore). Other mutating
+        # tools (MCP, non-SAFE task) stay blocked. The substring "[Plan mode:
+        # write operations disabled]" is part of the contract (tests match it).
+        if (
+            self.agent_manager.active_profile.name == BuiltinAgentName.PLAN
+            and tool_instance.__class__.mutates_state
+        ):
+            allowlisted = False
+            if tool_call.tool_name in _PLAN_GATE_BYPASS_TOOLS:
+                permission_ctx: PermissionContext | None = None
+                try:
+                    permission_ctx = tool_instance.resolve_permission(
+                        tool_call.validated_args
+                    )
+                except Exception:
+                    permission_ctx = None
+                allowlisted = (
+                    permission_ctx is not None
+                    and permission_ctx.permission == ToolPermission.ALWAYS
+                )
+            elif tool_call.tool_name == "task":
+                target_agent_name = getattr(tool_call.validated_args, "agent", None)
+                if target_agent_name:
+                    try:
+                        target_profile = self.agent_manager.get_agent(target_agent_name)
+                    except Exception:
+                        target_profile = None
+                    allowlisted = (
+                        target_profile is not None
+                        and target_profile.safety == AgentSafety.SAFE
+                    )
+            if not allowlisted:
+                yield self._tool_failure_event(
+                    tool_call,
+                    f"<{TOOL_ERROR_TAG}>[Plan mode: write operations disabled]"
+                    f"</{TOOL_ERROR_TAG}>",
+                    span=span,
+                )
+                return
 
         decision: ToolDecision | None = None
         try:
@@ -1318,6 +1397,7 @@ class AgentLoop:  # noqa: PLR0904
                     sampling_callback=self._sampling_handler,
                     plan_file_path=self._plan_session.plan_file_path,
                     switch_agent_callback=self.switch_agent,
+                    request_fork_to_dev_callback=self.request_fork_to_dev,
                     skill_manager=self.skill_manager,
                     scratchpad_dir=self.scratchpad_dir,
                     permission_store=self._permission_store,
@@ -1442,6 +1522,93 @@ class AgentLoop:  # noqa: PLR0904
                 with contextlib.suppress(asyncio.CancelledError):
                     await monitor
 
+    async def _maybe_prompt_plan_confirmation(self) -> None:  # noqa: PLR0911
+        """Software-driven plan confirmation: fires when the turn settled and a
+        write_file/search_replace mutated the plan file this turn. Shows the
+        same 3-option dialog ExitPlanMode would; on approval stages a
+        fork-to-dev. Decouples confirmation from the LLM remembering to call
+        exit_plan_mode (smaller / local models routinely don't).
+        """
+        if not self._plan_modified_in_turn:
+            return
+        if self.agent_profile.name != BuiltinAgentName.PLAN:
+            return
+        if self.user_input_callback is None:
+            return
+        plan_path = self._plan_session.plan_file_path
+        if not plan_path.is_file():
+            return
+
+        from vibe.core.tools.builtins.ask_user_question import (
+            AskUserQuestionArgs,
+            AskUserQuestionResult,
+            Choice,
+            Question,
+        )
+        from vibe.core.utils.io import read_safe
+
+        try:
+            plan_content = read_safe(plan_path).text
+        except OSError:
+            return
+        if not plan_content.strip():
+            return
+
+        confirmation = AskUserQuestionArgs(
+            footer_note=f"Plan: {plan_path} (Ctrl+G to edit)",
+            questions=[
+                Question(
+                    question=(
+                        "Plan written. Approve and start a fresh implementation "
+                        "context with this plan as the seed?"
+                    ),
+                    header="Plan ready",
+                    options=[
+                        Choice(
+                            label="Yes, and auto approve edits",
+                            description=(
+                                "Wipe planning context, start fresh with "
+                                "auto-approve edits enabled."
+                            ),
+                        ),
+                        Choice(
+                            label="Yes, and request approval for edits",
+                            description=(
+                                "Wipe planning context, start fresh in the "
+                                "profile you were in before plan mode."
+                            ),
+                        ),
+                        Choice(
+                            label="No, keep refining",
+                            description=(
+                                "Stay in plan mode; the assistant can keep "
+                                "editing the plan file."
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        result = await self.user_input_callback(confirmation)
+        result = cast(AskUserQuestionResult, result)
+        if result.cancelled or not result.answers:
+            return
+        answer_lower = result.answers[0].answer.lower()
+
+        if answer_lower == "yes, and auto approve edits":
+            target_profile = BuiltinAgentName.ACCEPT_EDITS
+        elif answer_lower == "yes, and request approval for edits":
+            stashed = getattr(self.agent_manager, "pre_plan_profile", None)
+            target_profile = stashed or BuiltinAgentName.DEFAULT
+            available = getattr(self.agent_manager, "available_agents", None)
+            if stashed and available is not None and stashed not in available:
+                target_profile = BuiltinAgentName.DEFAULT
+        else:
+            return  # "No, keep refining" or any other answer
+
+        self.request_fork_to_dev(plan_content, plan_path, target_profile)
+
     def _handle_tool_response(
         self,
         tool_call: ResolvedToolCall,
@@ -1456,6 +1623,26 @@ class AgentLoop:  # noqa: PLR0904
                 self.format_handler.create_tool_response_message(tool_call, text)
             )
         )
+
+        if (
+            status == "success"
+            and self.agent_profile.name == BuiltinAgentName.PLAN
+            and tool_call.tool_name in {"write_file", "search_replace"}
+        ):
+            # write_file uses `path`; search_replace uses `file_path`. Check
+            # both so every refinement turn after the first detects the edit.
+            args_path = getattr(tool_call.validated_args, "path", None) or getattr(
+                tool_call.validated_args, "file_path", None
+            )
+            if args_path is not None:
+                try:
+                    if (
+                        Path(args_path).resolve()
+                        == self._plan_session.plan_file_path.resolve()
+                    ):
+                        self._plan_modified_in_turn = True
+                except (OSError, ValueError):
+                    pass
 
         if span is not None:
             set_tool_result(span, text)
@@ -1852,6 +2039,40 @@ class AgentLoop:  # noqa: PLR0904
         )
         return [m.model_copy(deep=True) for m in source_messages[:next_turn_index]]
 
+    @property
+    def pending_fork_to_dev(self) -> tuple[str, Path, str] | None:
+        return self._pending_fork_to_dev
+
+    def request_fork_to_dev(
+        self, plan_text: str, plan_path: Path, target_profile: str
+    ) -> None:
+        """Stage a fork-to-dev (called by ExitPlanMode / plan confirmation).
+
+        Does not mutate state now — the host app calls fork_to_dev() after the
+        current act() completes so the conversation loop drains cleanly first.
+        """
+        self._pending_fork_to_dev = (plan_text, plan_path, target_profile)
+
+    @requires_init
+    async def fork_to_dev(self) -> str:
+        """Execute the staged fork: wipe history, switch profile, return the
+        seed user message for the caller to pass to act().
+
+        Order: clear pending up-front (cancel-safety) -> clear_history (also
+        resets plan state + _pre_plan_profile) -> switch_agent (rotates
+        plan_session via its leaving-PLAN branch) -> return seed.
+        """
+        if self._pending_fork_to_dev is None:
+            raise AgentLoopError("No pending fork-to-dev to execute.")
+        plan_text, plan_path, target_profile = self._pending_fork_to_dev
+        self._pending_fork_to_dev = None
+        await self.clear_history()
+        await self.switch_agent(target_profile)
+        return (
+            f"Implement the following plan:\n\n{plan_text.strip()}\n\n"
+            f"Plan file: {plan_path} (re-read at any time)."
+        )
+
     @requires_init
     async def clear_history(self) -> None:
         await self.session_logger.save_interaction(
@@ -1876,6 +2097,12 @@ class AgentLoop:  # noqa: PLR0904
 
         self.middleware_pipeline.reset()
         self.tool_manager.reset_all()
+        # Wipe session-scoped plan state so /clear and fork-to-dev start clean.
+        self._plan_session = PlanSession()
+        self._pending_fork_to_dev = None
+        self._plan_modified_in_turn = False
+        if hasattr(self.agent_manager, "_pre_plan_profile"):
+            self.agent_manager._pre_plan_profile = None
         await self._reset_session(keep_parent=False)
 
     @requires_init
@@ -1956,8 +2183,13 @@ class AgentLoop:  # noqa: PLR0904
     async def switch_agent(self, agent_name: str) -> None:
         if agent_name == self.agent_profile.name:
             return
+        leaving_plan = self.agent_profile.name == BuiltinAgentName.PLAN
         self.agent_manager.switch_profile(agent_name)
         await self.reload_with_initial_messages(reset_middleware=False)
+        if leaving_plan:
+            # Rotate to a fresh plan file so a future /plan in this session
+            # doesn't overwrite the just-approved plan.
+            self._plan_session = PlanSession()
 
     @requires_init
     async def reload_with_initial_messages(
