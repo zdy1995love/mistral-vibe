@@ -8,6 +8,7 @@ from enum import StrEnum, auto
 from functools import wraps
 from http import HTTPStatus
 import inspect
+import json
 import os
 from pathlib import Path
 import threading
@@ -106,6 +107,7 @@ from vibe.core.types import (
     CompactEndEvent,
     CompactStartEvent,
     ContextTooLongError,
+    FunctionCall,
     LLMChunk,
     LLMMessage,
     LLMUsage,
@@ -201,6 +203,166 @@ def _is_non_retryable_error(e: BaseException) -> bool:
         seen.add(id(current))
         current = current.__cause__
     return False
+
+
+def _sanitize_tool_call_arguments(message: LLMMessage) -> LLMMessage:
+    """Replace unparseable tool_call.arguments with empty-object JSON.
+
+    A streamed tool call can be truncated mid-arguments — for instance
+    when the model hits max_tokens or the network drops between arg
+    deltas. The chunk_agg merge in `_chat_streaming` happily concatenates
+    whatever fragments arrived, so the persisted assistant message ends
+    up with arguments like `{"command": "ls -la /home/zdy/zeroclaw`
+    (no closing quote / brace). Sending that message back to vLLM on
+    the next turn triggers a 400 with `Unterminated string starting at:
+    line 1 column 13` because vLLM strictly validates each tool_call's
+    arguments as standalone JSON before the chat endpoint runs.
+
+    This helper round-trips arguments through `json.loads`. Anything
+    that doesn't parse is rewritten to `{}` — preserving the tool name
+    and call id (so downstream tool dispatch still surfaces a clear
+    BashArgs/etc. validation error to the model) while ensuring the
+    next request body is well-formed.
+    """
+    tool_calls = message.tool_calls
+    if not tool_calls:
+        return message
+    new_tool_calls = list(tool_calls)
+    fixed = False
+    for i, tc in enumerate(tool_calls):
+        args_str = tc.function.arguments
+        if args_str is None:
+            continue
+        try:
+            json.loads(args_str)
+        except (json.JSONDecodeError, TypeError):
+            fixed = True
+            new_function = tc.function.model_copy(update={"arguments": "{}"})
+            new_tool_calls[i] = tc.model_copy(update={"function": new_function})
+    if not fixed:
+        return message
+    return message.model_copy(update={"tool_calls": new_tool_calls})
+
+
+def _generate_synthetic_tool_call_id() -> str:
+    """Random call_id matching the shape vLLM emits (9 alnum chars).
+
+    Used when promoting an inline-text tool call into a structured one
+    (`_promote_inline_tool_calls`) — the LLM never emitted a real id, so
+    we mint one. Length / alphabet picked to be visually indistinguishable
+    from real ids in logs.
+    """
+    import secrets
+    import string
+
+    return "".join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(9)
+    )
+
+
+def _match_trailing_inline_tool_call(
+    stripped: str, available_tool_names: set[str]
+) -> tuple[int, str, str] | None:
+    """Match a single ``<name>{<balanced_json>}`` at the tail of ``stripped``.
+
+    Returns ``(idx, name, args_json)`` where ``idx`` is the start of
+    ``<name>``, or ``None`` if no valid match. Conservative gates:
+    word-boundary before ``<name>``, JSON parses cleanly via ``raw_decode``
+    consuming the entire suffix, JSON is an object (not array/literal).
+    """
+    if not stripped.endswith("}"):
+        return None
+    decoder = json.JSONDecoder()
+    # Try longer names first so a tool named ``write_file`` is preferred
+    # over one named ``write`` if both happen to match.
+    for name in sorted(available_tool_names, key=len, reverse=True):
+        marker = name + "{"
+        idx = stripped.rfind(marker)
+        if idx < 0:
+            continue
+        if idx > 0:
+            prev = stripped[idx - 1]
+            if prev.isalnum() or prev == "_":
+                continue  # name is part of a longer identifier
+        json_start = idx + len(name)
+        candidate = stripped[json_start:]
+        try:
+            parsed, end_offset = decoder.raw_decode(candidate)
+        except json.JSONDecodeError:
+            continue
+        if end_offset != len(candidate):
+            continue  # extra chars after the JSON close
+        if not isinstance(parsed, dict):
+            continue
+        return (idx, name, candidate)
+    return None
+
+
+def _promote_inline_tool_calls(
+    message: LLMMessage, available_tool_names: set[str]
+) -> LLMMessage:
+    """Synthesize structured ``tool_calls`` from inline ``<name>{<json>}``
+    segments at the tail of ``message.content`` when the model emitted tool
+    calls without the ``[TOOL_CALLS]`` BOT marker.
+
+    Background: under reasoning_effort=high in long contexts, Mistral-style
+    models occasionally drop the ``[TOOL_CALLS]`` special token and write
+    one *or more* back-to-back calls as bare text. With no structured
+    tool_calls in the response, the agent loop stalls and the leaked text
+    gets persisted to history — which (a) renders as garbage to the user
+    and (b) reinforces the malformed pattern when sent back to vLLM. This
+    helper recovers by peeling matching suffixes from the tail until none
+    remain, then promoting each to a structured ``ToolCall``.
+
+    Conservative gates to avoid promoting legitimate prose that happens to
+    contain ``name{...}``-shaped text:
+      1. ``message.tool_calls`` must be empty (don't override real calls).
+      2. ``content`` must end with ``}`` (after rstrip).
+      3. ``<name>`` must be in ``available_tool_names``.
+      4. ``<name>`` must be on a word boundary (no leading identifier char).
+      5. The JSON, parsed via ``raw_decode``, must consume the entire suffix
+         starting at ``{`` — no trailing text after ``}``.
+      6. Parsed JSON must be an object (dict), not array/literal.
+
+    Returns a new message with all peeled suffixes stripped from content
+    and N synthetic tool_calls appended (in original order, sequential
+    indices 0..N-1); or the original message unchanged if no promotion
+    applies. If peeling stops mid-content (e.g. the next-to-be-peeled
+    segment isn't a whitelisted call), only the trailing valid run is
+    promoted; leading content is preserved verbatim.
+    """
+    if message.tool_calls:
+        return message
+    content = message.content
+    if not content or not available_tool_names:
+        return message
+
+    stripped = content.rstrip()
+    records: list[tuple[str, str]] = []  # (name, args_json), tail-to-head order
+    while True:
+        match = _match_trailing_inline_tool_call(stripped, available_tool_names)
+        if match is None:
+            break
+        idx, name, args_json = match
+        records.append((name, args_json))
+        stripped = stripped[:idx].rstrip()
+
+    if not records:
+        return message
+
+    records.reverse()
+    synthetic_calls = [
+        ToolCall(
+            id=_generate_synthetic_tool_call_id(),
+            index=i,
+            function=FunctionCall(name=name, arguments=args_json),
+        )
+        for i, (name, args_json) in enumerate(records)
+    ]
+    new_content = stripped or None
+    return message.model_copy(
+        update={"content": new_content, "tool_calls": synthetic_calls}
+    )
 
 
 def requires_init(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1365,6 +1527,10 @@ class AgentLoop:  # noqa: PLR0904
             processed_message = self.format_handler.process_api_response_message(
                 result.message
             )
+            processed_message = _sanitize_tool_call_arguments(processed_message)
+            processed_message = _promote_inline_tool_calls(
+                processed_message, {t.function.name for t in available_tools or []}
+            )
             self.messages.append(processed_message)
             return LLMChunk(message=processed_message, usage=result.usage)
 
@@ -1437,7 +1603,11 @@ class AgentLoop:  # noqa: PLR0904
                 )
             self._update_stats(usage=usage, time_seconds=end_time - start_time)
 
-            self.messages.append(chunk_agg.message)
+            stream_message = _sanitize_tool_call_arguments(chunk_agg.message)
+            stream_message = _promote_inline_tool_calls(
+                stream_message, {t.function.name for t in available_tools or []}
+            )
+            self.messages.append(stream_message)
 
         except Exception as e:
             if _should_raise_rate_limit_error(e):
